@@ -160,19 +160,23 @@ RegionSelectionOverlay::RegionSelectionOverlay(HINSTANCE instance) : instance_(i
 std::optional<RegionSelectionResult> RegionSelectionOverlay::SelectRegion(
     const capture::DesktopSnapshot& snapshot,
     std::wstring& error_message) {
+    return RunSession(snapshot, false, error_message);
+}
+
+std::optional<RegionSelectionResult> RegionSelectionOverlay::EditImage(
+    const capture::DesktopSnapshot& snapshot,
+    std::wstring& error_message) {
+    return RunSession(snapshot, true, error_message);
+}
+
+std::optional<RegionSelectionResult> RegionSelectionOverlay::RunSession(
+    const capture::DesktopSnapshot& snapshot,
+    bool start_with_full_selection,
+    std::wstring& error_message) {
     snapshot_ = &snapshot;
     working_image_ = snapshot.image;
-    edit_history_.clear();
-    finished_ = false;
-    accepted_ = false;
-    anchor_ = POINT{};
-    current_ = POINT{};
-    selection_ = RECT{};
-    active_tool_ = EditTool::Select;
-    interaction_mode_ = InteractionMode::None;
-    preview_start_ = POINT{};
-    preview_current_ = POINT{};
-    toolbar_.Hide();
+    session_starts_with_full_selection_ = start_with_full_selection;
+    InitializeSessionState();
 
     if (!RegisterWindowClass()) {
         error_message = L"注册选区窗口失败。\n\n" + common::GetLastErrorMessage(GetLastError());
@@ -204,6 +208,13 @@ std::optional<RegionSelectionResult> RegionSelectionOverlay::SelectRegion(
         snapshot_ = nullptr;
         working_image_ = capture::CapturedImage{};
         return std::nullopt;
+    }
+
+    if (start_with_full_selection) {
+        const RECT full_image_rect{0, 0, snapshot.image.Width(), snapshot.image.Height()};
+        if (common::HasArea(full_image_rect)) {
+            CommitSelection(full_image_rect);
+        }
     }
 
     ShowWindow(window_, SW_SHOW);
@@ -245,8 +256,26 @@ std::optional<RegionSelectionResult> RegionSelectionOverlay::SelectRegion(
     snapshot_ = nullptr;
     working_image_ = capture::CapturedImage{};
     edit_history_.clear();
+    session_starts_with_full_selection_ = false;
     toolbar_.Hide();
     return result;
+}
+
+void RegionSelectionOverlay::InitializeSessionState() {
+    edit_history_.clear();
+    finished_ = false;
+    accepted_ = false;
+    anchor_ = POINT{};
+    current_ = POINT{};
+    selection_ = RECT{};
+    active_tool_ = EditTool::Select;
+    interaction_mode_ = InteractionMode::None;
+    adjust_handle_ = SelectionAdjustHandle::None;
+    drag_start_ = POINT{};
+    drag_origin_selection_ = RECT{};
+    preview_start_ = POINT{};
+    preview_current_ = POINT{};
+    toolbar_.Hide();
 }
 
 bool RegionSelectionOverlay::RegisterWindowClass() const {
@@ -1126,6 +1155,17 @@ void RegionSelectionOverlay::DrawInstructions(HDC hdc, const RECT& bounds) const
     InflateRect(&text_rect, -12, -8);
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, kPanelTextColor);
+    if (session_starts_with_full_selection_) {
+        DrawTextW(
+            hdc,
+            L"\u53ef\u76f4\u63a5\u4f7f\u7528\u9a6c\u8d5b\u514b\u6216\u7bad\u5934\u6807\u6ce8\uff0c"
+            L"\u4e5f\u53ef\u62d6\u52a8\u6216\u8c03\u6574\u8303\u56f4\u3002"
+            L"\u6309 Enter \u5b8c\u6210\uff0c\u6309 Esc \u6216\u53f3\u952e\u53d6\u6d88\u3002",
+            -1,
+            &text_rect,
+            DT_LEFT | DT_VCENTER | DT_WORDBREAK);
+        return;
+    }
     DrawTextW(hdc,
               L"拖动鼠标框选截图区域，松开后可继续做马赛克或箭头标注。按 Enter 完成，按 Esc 或右键取消。",
               -1,

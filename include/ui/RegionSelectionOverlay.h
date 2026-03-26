@@ -23,6 +23,8 @@ public:
 
     std::optional<RegionSelectionResult> SelectRegion(const capture::DesktopSnapshot& snapshot,
                                                       std::wstring& error_message);
+    std::optional<RegionSelectionResult> EditImage(const capture::DesktopSnapshot& snapshot,
+                                                   std::wstring& error_message);
 
 private:
     enum class EditTool {
@@ -56,6 +58,10 @@ private:
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param);
 
+    std::optional<RegionSelectionResult> RunSession(const capture::DesktopSnapshot& snapshot,
+                                                    bool start_with_full_selection,
+                                                    std::wstring& error_message);
+    void InitializeSessionState();
     bool RegisterWindowClass() const;
     bool CreateBackBuffer(std::wstring& error_message);
     void DestroyBackBuffer();
@@ -120,6 +126,7 @@ private:
     const capture::DesktopSnapshot* snapshot_ = nullptr;
     capture::CapturedImage working_image_;
     std::vector<capture::CapturedImage> edit_history_;
+    bool session_starts_with_full_selection_ = false;
     bool finished_ = false;
     bool accepted_ = false;
     POINT anchor_{};

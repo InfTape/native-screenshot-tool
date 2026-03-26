@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -33,9 +32,9 @@ constexpr int kWindowHotkeyId = 2003;
 constexpr UINT kTrayIconMessage = WM_APP + 1;
 
 constexpr int kWindowWidth = 1240;
-constexpr int kWindowHeight = 820;
+constexpr int kWindowHeight = 360;
 constexpr int kMinWindowWidth = 980;
-constexpr int kMinWindowHeight = 620;
+constexpr int kMinWindowHeight = 320;
 constexpr int kMargin = 16;
 constexpr int kButtonWidth = 132;
 constexpr int kDirectoryButtonWidth = 148;
@@ -694,17 +693,8 @@ void MainWindow::ApplySaveFormatSelection() {
     UpdateStatus(std::wstring(L"默认保存格式已切换为 ") + FormatDisplayName(settings_.save_format) + L"。");
 }
 
-RECT MainWindow::CalculatePreviewRect(int client_width, int client_height) const {
-    RECT preview{};
-    preview.left = kMargin;
-    preview.top = kMargin + kButtonHeight + kGap + ((kButtonHeight + kGap) * 3) + kStatusHeight +
-                  kGap;
-    preview.right = std::max<LONG>(preview.left, static_cast<LONG>(client_width - kMargin));
-    preview.bottom = std::max<LONG>(preview.top, static_cast<LONG>(client_height - kMargin));
-    return preview;
-}
-
 void MainWindow::LayoutControls(int client_width, int client_height) {
+    static_cast<void>(client_height);
     int y = kMargin;
     int x = kMargin;
 
@@ -758,9 +748,6 @@ void MainWindow::LayoutControls(int client_width, int client_height) {
                std::max(240, client_width - (kMargin * 2)),
                kStatusHeight,
                TRUE);
-
-    preview_rect_ = CalculatePreviewRect(client_width, client_height);
-    preview_rect_.top = y + kStatusHeight + kGap;
 }
 
 void MainWindow::UpdateStatus(const std::wstring& text) const {
@@ -826,9 +813,31 @@ bool MainWindow::CaptureDesktop() {
     image_ = std::move(snapshot->image);
     UpdateHotkeyLabels();
     UpdateActionState();
-    UpdateStatus(L"全屏截图完成：" + std::to_wstring(image_.Width()) + L" x " +
-                 std::to_wstring(image_.Height()));
-    InvalidateRect(window_, &preview_rect_, TRUE);
+
+    std::wstring save_error_message;
+    std::wstring saved_path;
+    bool clipboard_failed = false;
+    if (!SaveImageToConfiguredDirectory(image_, saved_path, save_error_message, clipboard_failed)) {
+        UpdateStatus(L"全屏截图完成，但自动保存失败。");
+        MessageBoxW(window_, save_error_message.c_str(), L"保存失败", MB_OK | MB_ICONERROR);
+        return true;
+    }
+
+    if (clipboard_failed) {
+        UpdateStatus(L"全屏截图已自动保存到：" + saved_path + L"，但复制到剪贴板失败。");
+        image_ = capture::CapturedImage{};
+        UpdateActionState();
+        MessageBoxW(window_,
+                    save_error_message.c_str(),
+                    L"复制到剪贴板失败",
+                    MB_OK | MB_ICONWARNING);
+        return true;
+    }
+
+    UpdateStatus(std::wstring(L"全屏截图已自动保存为 ") +
+                 FormatDisplayName(settings_.save_format) + L"，并复制到剪贴板：" + saved_path);
+    image_ = capture::CapturedImage{};
+    UpdateActionState();
     return true;
 }
 
@@ -865,7 +874,6 @@ bool MainWindow::CaptureRegion() {
     image_ = std::move(selected_result->image);
     UpdateHotkeyLabels();
     UpdateActionState();
-    InvalidateRect(window_, &preview_rect_, TRUE);
 
     std::wstring save_error_message;
     std::wstring saved_path;
@@ -878,6 +886,8 @@ bool MainWindow::CaptureRegion() {
 
     if (clipboard_failed) {
         UpdateStatus(L"选区截图已自动保存到：" + saved_path + L"，但复制到剪贴板失败。");
+        image_ = capture::CapturedImage{};
+        UpdateActionState();
         MessageBoxW(window_,
                     save_error_message.c_str(),
                     L"复制到剪贴板失败",
@@ -887,6 +897,8 @@ bool MainWindow::CaptureRegion() {
 
     UpdateStatus(std::wstring(L"选区截图已自动保存为 ") +
                  FormatDisplayName(settings_.save_format) + L"，并复制到剪贴板：" + saved_path);
+    image_ = capture::CapturedImage{};
+    UpdateActionState();
 
     return true;
 }
@@ -929,13 +941,51 @@ bool MainWindow::CaptureWindow() {
         return false;
     }
 
-    image_ = std::move(*captured_window);
+    capture::DesktopSnapshot editing_snapshot{};
+    editing_snapshot.origin_x = selected_window->bounds.left;
+    editing_snapshot.origin_y = selected_window->bounds.top;
+    editing_snapshot.image = std::move(*captured_window);
+
+    std::wstring edit_error_message;
+    auto edited_result = region_selection_overlay_.EditImage(editing_snapshot, edit_error_message);
+    if (!edited_result.has_value()) {
+        if (!edit_error_message.empty()) {
+            UpdateStatus(L"窗口截图失败。");
+            MessageBoxW(window_, edit_error_message.c_str(), L"编辑失败", MB_OK | MB_ICONERROR);
+        } else {
+            UpdateStatus(L"已取消窗口截图。");
+        }
+        return false;
+    }
+
+    image_ = std::move(edited_result->image);
     UpdateHotkeyLabels();
     UpdateActionState();
-    UpdateStatus(L"窗口截图完成：" + selected_window->title + L" (" +
-                 std::to_wstring(image_.Width()) + L" x " +
-                 std::to_wstring(image_.Height()) + L")");
-    InvalidateRect(window_, &preview_rect_, TRUE);
+
+    std::wstring save_error_message;
+    std::wstring saved_path;
+    bool clipboard_failed = false;
+    if (!SaveImageToConfiguredDirectory(image_, saved_path, save_error_message, clipboard_failed)) {
+        UpdateStatus(L"窗口截图完成，但自动保存失败。");
+        MessageBoxW(window_, save_error_message.c_str(), L"保存失败", MB_OK | MB_ICONERROR);
+        return true;
+    }
+
+    if (clipboard_failed) {
+        UpdateStatus(L"窗口截图已自动保存到：" + saved_path + L"，但复制到剪贴板失败。");
+        image_ = capture::CapturedImage{};
+        UpdateActionState();
+        MessageBoxW(window_,
+                    save_error_message.c_str(),
+                    L"复制到剪贴板失败",
+                    MB_OK | MB_ICONWARNING);
+        return true;
+    }
+
+    UpdateStatus(std::wstring(L"窗口截图已自动保存为 ") +
+                 FormatDisplayName(settings_.save_format) + L"，并复制到剪贴板：" + saved_path);
+    image_ = capture::CapturedImage{};
+    UpdateActionState();
     return true;
 }
 
@@ -966,7 +1016,6 @@ void MainWindow::ClearCapture() {
     image_ = capture::CapturedImage{};
     UpdateActionState();
     UpdateStatus(L"截图已清空。");
-    InvalidateRect(window_, &preview_rect_, TRUE);
 }
 
 void MainWindow::BeginHotkeyRecording(HotkeySlot slot) {
@@ -1184,59 +1233,6 @@ void MainWindow::HandleTrayCommand(TrayMenuCommand command) {
     }
 }
 
-void MainWindow::DrawPreview(HDC hdc, const RECT& bounds) const {
-    RECT content = bounds;
-    InflateRect(&content, -1, -1);
-
-    const int available_width = content.right - content.left;
-    const int available_height = content.bottom - content.top;
-    if (available_width <= 0 || available_height <= 0) {
-        return;
-    }
-
-    const double width_ratio =
-        static_cast<double>(available_width) / static_cast<double>(image_.Width());
-    const double height_ratio =
-        static_cast<double>(available_height) / static_cast<double>(image_.Height());
-    const double scale = std::min(width_ratio, height_ratio);
-
-    const int draw_width = std::max(1, static_cast<int>(std::lround(image_.Width() * scale)));
-    const int draw_height = std::max(1, static_cast<int>(std::lround(image_.Height() * scale)));
-    const int draw_left = content.left + (available_width - draw_width) / 2;
-    const int draw_top = content.top + (available_height - draw_height) / 2;
-
-    const BITMAPINFO bitmap_info = image_.CreateBitmapInfo();
-
-    SetStretchBltMode(hdc, HALFTONE);
-    SetBrushOrgEx(hdc, 0, 0, nullptr);
-    StretchDIBits(hdc,
-                  draw_left,
-                  draw_top,
-                  draw_width,
-                  draw_height,
-                  0,
-                  0,
-                  image_.Width(),
-                  image_.Height(),
-                  image_.Pixels().data(),
-                  &bitmap_info,
-                  DIB_RGB_COLORS,
-                  SRCCOPY);
-}
-
-void MainWindow::DrawEmptyState(HDC hdc, const RECT& bounds) const {
-    RECT text_rect = bounds;
-    InflateRect(&text_rect, -24, -24);
-
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, RGB(90, 90, 90));
-    DrawTextW(hdc,
-              L"当前没有截图。\n\n可使用“全屏截图”“选区截图”“窗口截图”，\n或直接按对应的全局快捷键。",
-              -1,
-              &text_rect,
-              DT_CENTER | DT_VCENTER | DT_WORDBREAK);
-}
-
 LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) {
     switch (message) {
     case WM_CREATE:
@@ -1366,17 +1362,6 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         RECT client_rect{};
         GetClientRect(window_, &client_rect);
         FillRect(hdc, &client_rect, GetSysColorBrush(COLOR_WINDOW));
-
-        HBRUSH preview_brush = CreateSolidBrush(RGB(245, 247, 250));
-        FillRect(hdc, &preview_rect_, preview_brush);
-        DeleteObject(preview_brush);
-        FrameRect(hdc, &preview_rect_, GetSysColorBrush(COLOR_3DSHADOW));
-
-        if (image_.IsEmpty()) {
-            DrawEmptyState(hdc, preview_rect_);
-        } else {
-            DrawPreview(hdc, preview_rect_);
-        }
 
         EndPaint(window_, &paint_struct);
         return 0;

@@ -43,7 +43,6 @@ private:
     bool CreateChildControls();
     bool InitializeHotkeySettings();
     bool InitializeTrayIcon();
-    RECT CalculatePreviewRect(int client_width, int client_height) const;
     void LayoutControls(int client_width, int client_height);
     void UpdateStatus(const std::wstring& text) const;
     void UpdateHotkeyLabels() const;
@@ -76,8 +75,6 @@ private:
     bool ResolveDefaultSaveDirectory(std::wstring& directory, std::wstring& error_message) const;
     bool ChooseSaveDirectory(std::wstring& selected_directory) const;
     void ApplySaveFormatSelection();
-    void DrawPreview(HDC hdc, const RECT& bounds) const;
-    void DrawEmptyState(HDC hdc, const RECT& bounds) const;
     LRESULT HandleMessage(UINT message, WPARAM w_param, LPARAM l_param);
 
     HINSTANCE instance_ = nullptr;
@@ -93,7 +90,6 @@ private:
     HWND status_label_ = nullptr;
     std::array<HWND, kHotkeySlotCount> hotkey_buttons_{};
     std::array<HWND, kHotkeySlotCount> hotkey_labels_{};
-    RECT preview_rect_{};
     bool capture_in_progress_ = false;
     HotkeySlot recording_hotkey_slot_ = HotkeySlot::None;
     std::array<bool, kHotkeySlotCount> hotkey_registered_{};
