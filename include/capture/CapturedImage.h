@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -26,9 +27,11 @@ public:
     BITMAPINFO CreateBitmapInfo() const;
 
 private:
+    void EnsureUniquePixels();
+
     int width_ = 0;
     int height_ = 0;
-    std::vector<std::uint8_t> pixels_;
+    std::shared_ptr<std::vector<std::uint8_t>> pixels_;
 };
 
 }  // namespace capture

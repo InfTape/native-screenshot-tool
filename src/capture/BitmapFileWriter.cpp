@@ -2,12 +2,10 @@
 
 #include <Windows.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
-#include <vector>
 
 namespace capture {
 
@@ -44,14 +42,7 @@ bool BitmapFileWriter::WriteBmp(const std::wstring& path,
     info_header.biCompression = BI_RGB;
     info_header.biSizeImage = static_cast<DWORD>(pixel_bytes);
 
-    std::vector<std::uint8_t> bottom_up_pixels(pixel_bytes);
     const auto& source = image.Pixels();
-    for (int row = 0; row < image.Height(); ++row) {
-        const std::size_t src_offset = static_cast<std::size_t>(row) * row_stride;
-        const std::size_t dst_offset =
-            static_cast<std::size_t>(image.Height() - 1 - row) * row_stride;
-        std::copy_n(source.data() + src_offset, row_stride, bottom_up_pixels.data() + dst_offset);
-    }
 
     std::ofstream output(std::filesystem::path(path), std::ios::binary);
     if (!output.is_open()) {
@@ -61,8 +52,11 @@ bool BitmapFileWriter::WriteBmp(const std::wstring& path,
 
     output.write(reinterpret_cast<const char*>(&file_header), sizeof(file_header));
     output.write(reinterpret_cast<const char*>(&info_header), sizeof(info_header));
-    output.write(reinterpret_cast<const char*>(bottom_up_pixels.data()),
-                 static_cast<std::streamsize>(bottom_up_pixels.size()));
+    for (int row = image.Height(); row-- > 0;) {
+        const std::size_t src_offset = static_cast<std::size_t>(row) * row_stride;
+        output.write(reinterpret_cast<const char*>(source.data() + src_offset),
+                     static_cast<std::streamsize>(row_stride));
+    }
 
     if (!output.good()) {
         error_message = L"写入 BMP 文件时发生错误。";

@@ -2,11 +2,9 @@
 
 #include <Windows.h>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <vector>
 
 namespace capture {
 
@@ -36,16 +34,7 @@ bool ImageClipboardWriter::CopyToClipboard(HWND owner,
     info_header.biCompression = BI_RGB;
     info_header.biSizeImage = static_cast<DWORD>(pixel_bytes);
 
-    std::vector<std::uint8_t> bottom_up_pixels(pixel_bytes);
     const auto& source_pixels = image.Pixels();
-    for (int row = 0; row < image.Height(); ++row) {
-        const std::size_t src_offset = static_cast<std::size_t>(row) * row_stride;
-        const std::size_t dst_offset =
-            static_cast<std::size_t>(image.Height() - 1 - row) * row_stride;
-        std::copy_n(source_pixels.data() + src_offset,
-                    row_stride,
-                    bottom_up_pixels.data() + dst_offset);
-    }
 
     HGLOBAL clipboard_data = GlobalAlloc(GMEM_MOVEABLE, total_bytes);
     if (clipboard_data == nullptr) {
@@ -62,7 +51,13 @@ bool ImageClipboardWriter::CopyToClipboard(HWND owner,
 
     auto* destination = static_cast<std::uint8_t*>(locked_memory);
     std::memcpy(destination, &info_header, sizeof(info_header));
-    std::memcpy(destination + sizeof(info_header), bottom_up_pixels.data(), bottom_up_pixels.size());
+    auto* destination_pixels = destination + sizeof(info_header);
+    for (int row = 0; row < image.Height(); ++row) {
+        const std::size_t src_offset =
+            static_cast<std::size_t>(image.Height() - 1 - row) * row_stride;
+        const std::size_t dst_offset = static_cast<std::size_t>(row) * row_stride;
+        std::memcpy(destination_pixels + dst_offset, source_pixels.data() + src_offset, row_stride);
+    }
     GlobalUnlock(clipboard_data);
 
     if (!OpenClipboard(owner)) {

@@ -1,16 +1,25 @@
 #include "capture/CapturedImage.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "common/RectUtils.h"
+
+namespace {
+
+const std::vector<std::uint8_t> kEmptyPixels;
+
+}  // namespace
 
 namespace capture {
 
 CapturedImage::CapturedImage(int width, int height, std::vector<std::uint8_t> pixels)
-    : width_(width), height_(height), pixels_(std::move(pixels)) {}
+    : width_(width),
+      height_(height),
+      pixels_(std::make_shared<std::vector<std::uint8_t>>(std::move(pixels))) {}
 
 bool CapturedImage::IsEmpty() const {
-    return width_ <= 0 || height_ <= 0 || pixels_.empty();
+    return width_ <= 0 || height_ <= 0 || pixels_ == nullptr || pixels_->empty();
 }
 
 int CapturedImage::Width() const {
@@ -26,11 +35,23 @@ std::size_t CapturedImage::RowStride() const {
 }
 
 std::vector<std::uint8_t>& CapturedImage::Pixels() {
-    return pixels_;
+    EnsureUniquePixels();
+    return *pixels_;
 }
 
 const std::vector<std::uint8_t>& CapturedImage::Pixels() const {
-    return pixels_;
+    return pixels_ != nullptr ? *pixels_ : kEmptyPixels;
+}
+
+void CapturedImage::EnsureUniquePixels() {
+    if (pixels_ == nullptr) {
+        pixels_ = std::make_shared<std::vector<std::uint8_t>>();
+        return;
+    }
+
+    if (pixels_.use_count() != 1) {
+        pixels_ = std::make_shared<std::vector<std::uint8_t>>(*pixels_);
+    }
 }
 
 std::optional<CapturedImage> CapturedImage::Crop(const RECT& region,
@@ -46,9 +67,15 @@ std::optional<CapturedImage> CapturedImage::Crop(const RECT& region,
         return std::nullopt;
     }
 
+    if (clamped.left == 0 && clamped.top == 0 && clamped.right == width_ &&
+        clamped.bottom == height_) {
+        return *this;
+    }
+
     const int cropped_width = common::RectWidth(clamped);
     const int cropped_height = common::RectHeight(clamped);
     const std::size_t cropped_row_stride = static_cast<std::size_t>(cropped_width) * 4;
+    const auto& source_pixels = Pixels();
 
     std::vector<std::uint8_t> cropped_pixels(cropped_row_stride *
                                              static_cast<std::size_t>(cropped_height));
@@ -58,7 +85,9 @@ std::optional<CapturedImage> CapturedImage::Crop(const RECT& region,
             (static_cast<std::size_t>(clamped.top + row) * RowStride()) +
             (static_cast<std::size_t>(clamped.left) * 4);
         const std::size_t dst_offset = static_cast<std::size_t>(row) * cropped_row_stride;
-        std::copy_n(pixels_.data() + src_offset, cropped_row_stride, cropped_pixels.data() + dst_offset);
+        std::copy_n(source_pixels.data() + src_offset,
+                    cropped_row_stride,
+                    cropped_pixels.data() + dst_offset);
     }
 
     return CapturedImage(cropped_width, cropped_height, std::move(cropped_pixels));
