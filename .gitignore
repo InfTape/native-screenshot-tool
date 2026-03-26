@@ -1,0 +1,20 @@
+# Build outputs
+/build/
+/out/
+/dist/
+/cmake-build-*/
+
+# CMake local files
+/CMakeUserPresets.json
+/compile_commands.json
+
+# Visual Studio local files
+/.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+
+# OS junk
+Thumbs.db
+Desktop.ini
