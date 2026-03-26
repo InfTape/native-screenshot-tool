@@ -25,6 +25,10 @@ std::size_t CapturedImage::RowStride() const {
     return static_cast<std::size_t>(width_) * 4;
 }
 
+std::vector<std::uint8_t>& CapturedImage::Pixels() {
+    return pixels_;
+}
+
 const std::vector<std::uint8_t>& CapturedImage::Pixels() const {
     return pixels_;
 }

@@ -11,8 +11,10 @@ add_executable(NativeScreenshot WIN32
     src/app/App.cpp
     src/ui/MainWindow.cpp
     src/ui/RegionSelectionOverlay.cpp
+    src/ui/SelectionEditToolbar.cpp
     src/ui/WindowSelectionOverlay.cpp
     src/ui/TrayIconController.cpp
+    src/editing/ImageMarkupService.cpp
     src/hotkey/HotkeyDefinition.cpp
     src/hotkey/HotkeyManager.cpp
     src/capture/CapturedImage.cpp
@@ -27,8 +29,10 @@ add_executable(NativeScreenshot WIN32
     include/app/App.h
     include/ui/MainWindow.h
     include/ui/RegionSelectionOverlay.h
+    include/ui/SelectionEditToolbar.h
     include/ui/WindowSelectionOverlay.h
     include/ui/TrayIconController.h
+    include/editing/ImageMarkupService.h
     include/hotkey/HotkeyDefinition.h
     include/hotkey/HotkeyManager.h
     include/capture/CapturedImage.h

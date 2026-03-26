@@ -19,6 +19,7 @@ public:
     int Width() const;
     int Height() const;
     std::size_t RowStride() const;
+    std::vector<std::uint8_t>& Pixels();
     const std::vector<std::uint8_t>& Pixels() const;
     std::optional<CapturedImage> Crop(const RECT& region, std::wstring& error_message) const;
 

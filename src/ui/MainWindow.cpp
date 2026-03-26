@@ -1,4 +1,4 @@
-#include "ui/MainWindow.h"
+﻿#include "ui/MainWindow.h"
 
 #include <Windows.h>
 #include <commdlg.h>
@@ -549,8 +549,8 @@ bool MainWindow::CaptureRegion() {
         return false;
     }
 
-    auto selected_region = region_selection_overlay_.SelectRegion(*snapshot, error_message);
-    if (!selected_region.has_value()) {
+    auto selected_result = region_selection_overlay_.SelectRegion(*snapshot, error_message);
+    if (!selected_result.has_value()) {
         if (!error_message.empty()) {
             UpdateStatus(L"选区截图失败。");
             MessageBoxW(window_, error_message.c_str(), L"选区失败", MB_OK | MB_ICONERROR);
@@ -560,14 +560,7 @@ bool MainWindow::CaptureRegion() {
         return false;
     }
 
-    auto cropped_image = snapshot->image.Crop(*selected_region, error_message);
-    if (!cropped_image.has_value()) {
-        UpdateStatus(L"选区截图失败。");
-        MessageBoxW(window_, error_message.c_str(), L"裁剪失败", MB_OK | MB_ICONERROR);
-        return false;
-    }
-
-    image_ = std::move(*cropped_image);
+    image_ = std::move(selected_result->image);
     UpdateHotkeyLabels();
     UpdateActionState();
     UpdateStatus(L"选区截图完成：" + std::to_wstring(image_.Width()) + L" x " +
