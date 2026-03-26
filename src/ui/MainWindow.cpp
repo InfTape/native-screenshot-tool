@@ -1122,27 +1122,16 @@ bool MainWindow::TriggerCaptureByHotkey(int hotkey_identifier) {
         return false;
     }
 
-    const bool should_restore = hidden_to_tray_;
-    bool captured = false;
     switch (hotkey_identifier) {
     case kFullHotkeyId:
-        captured = CaptureDesktop();
-        break;
+        return CaptureDesktop();
     case kRegionHotkeyId:
-        captured = CaptureRegion();
-        break;
+        return CaptureRegion();
     case kWindowHotkeyId:
-        captured = CaptureWindow();
-        break;
+        return CaptureWindow();
     default:
         return false;
     }
-
-    if (captured && should_restore) {
-        ShowFromTray();
-    }
-
-    return captured;
 }
 
 void MainWindow::HideToTray() {
@@ -1177,27 +1166,15 @@ void MainWindow::HandleTrayCommand(TrayMenuCommand command) {
     case TrayMenuCommand::ShowWindow:
         ShowFromTray();
         break;
-    case TrayMenuCommand::CaptureRegion: {
-        const bool should_restore = hidden_to_tray_;
-        if (CaptureRegion() && should_restore) {
-            ShowFromTray();
-        }
+    case TrayMenuCommand::CaptureRegion:
+        CaptureRegion();
         break;
-    }
-    case TrayMenuCommand::CaptureFull: {
-        const bool should_restore = hidden_to_tray_;
-        if (CaptureDesktop() && should_restore) {
-            ShowFromTray();
-        }
+    case TrayMenuCommand::CaptureFull:
+        CaptureDesktop();
         break;
-    }
-    case TrayMenuCommand::CaptureWindow: {
-        const bool should_restore = hidden_to_tray_;
-        if (CaptureWindow() && should_restore) {
-            ShowFromTray();
-        }
+    case TrayMenuCommand::CaptureWindow:
+        CaptureWindow();
         break;
-    }
     case TrayMenuCommand::ExitApplication:
         ExitApplication();
         break;
