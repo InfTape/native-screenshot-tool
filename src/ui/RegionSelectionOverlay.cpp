@@ -24,6 +24,10 @@ constexpr COLORREF kPreviewAccentColor = RGB(242, 154, 28);
 constexpr COLORREF kArrowColor = RGB(255, 99, 71);
 constexpr int kArrowThickness = 4;
 constexpr int kMosaicBlockSize = 14;
+constexpr std::size_t kMaxUndoSteps = 20;
+constexpr int kSelectionHandleSize = 8;
+constexpr int kSelectionHandleHitPadding = 6;
+constexpr int kMinimumSelectionSize = 8;
 
 void FillSolidRect(HDC hdc, const RECT& rect, COLORREF color) {
     if (!common::HasArea(rect)) {
@@ -157,6 +161,7 @@ std::optional<RegionSelectionResult> RegionSelectionOverlay::SelectRegion(
     std::wstring& error_message) {
     snapshot_ = &snapshot;
     working_image_ = snapshot.image;
+    edit_history_.clear();
     finished_ = false;
     accepted_ = false;
     anchor_ = POINT{};
@@ -238,6 +243,7 @@ std::optional<RegionSelectionResult> RegionSelectionOverlay::SelectRegion(
     DestroyBackBuffer();
     snapshot_ = nullptr;
     working_image_ = capture::CapturedImage{};
+    edit_history_.clear();
     toolbar_.Hide();
     return result;
 }
@@ -498,6 +504,79 @@ bool RegionSelectionOverlay::HasPreviewRect() const {
     return common::HasArea(CurrentPreviewRect());
 }
 
+RegionSelectionOverlay::SelectionAdjustHandle RegionSelectionOverlay::HitTestSelectionHandle(
+    const POINT& point) const {
+    if (!common::HasArea(selection_)) {
+        return SelectionAdjustHandle::None;
+    }
+
+    static constexpr SelectionAdjustHandle kResizeHandles[] = {
+        SelectionAdjustHandle::TopLeft,
+        SelectionAdjustHandle::Top,
+        SelectionAdjustHandle::TopRight,
+        SelectionAdjustHandle::Right,
+        SelectionAdjustHandle::BottomRight,
+        SelectionAdjustHandle::Bottom,
+        SelectionAdjustHandle::BottomLeft,
+        SelectionAdjustHandle::Left,
+    };
+
+    for (const auto handle : kResizeHandles) {
+        RECT hit_rect = SelectionHandleRect(selection_, handle);
+        InflateRect(&hit_rect, kSelectionHandleHitPadding, kSelectionHandleHitPadding);
+        if (PtInRect(&hit_rect, point) != FALSE) {
+            return handle;
+        }
+    }
+
+    if (PtInRect(&selection_, point) != FALSE) {
+        return SelectionAdjustHandle::Move;
+    }
+
+    return SelectionAdjustHandle::None;
+}
+
+RECT RegionSelectionOverlay::SelectionHandleRect(const RECT& selection,
+                                                 SelectionAdjustHandle handle) const {
+    if (!common::HasArea(selection)) {
+        return RECT{};
+    }
+
+    const LONG center_x = (selection.left + selection.right) / 2;
+    const LONG center_y = (selection.top + selection.bottom) / 2;
+    const LONG half = kSelectionHandleSize / 2;
+    auto make_handle_rect = [half](LONG center_x_value, LONG center_y_value) {
+        return RECT{center_x_value - half,
+                    center_y_value - half,
+                    center_x_value + half,
+                    center_y_value + half};
+    };
+
+    switch (handle) {
+    case SelectionAdjustHandle::Left:
+        return make_handle_rect(selection.left, center_y);
+    case SelectionAdjustHandle::Top:
+        return make_handle_rect(center_x, selection.top);
+    case SelectionAdjustHandle::Right:
+        return make_handle_rect(selection.right, center_y);
+    case SelectionAdjustHandle::Bottom:
+        return make_handle_rect(center_x, selection.bottom);
+    case SelectionAdjustHandle::TopLeft:
+        return make_handle_rect(selection.left, selection.top);
+    case SelectionAdjustHandle::TopRight:
+        return make_handle_rect(selection.right, selection.top);
+    case SelectionAdjustHandle::BottomLeft:
+        return make_handle_rect(selection.left, selection.bottom);
+    case SelectionAdjustHandle::BottomRight:
+        return make_handle_rect(selection.right, selection.bottom);
+    case SelectionAdjustHandle::Move:
+        return selection;
+    case SelectionAdjustHandle::None:
+    default:
+        return RECT{};
+    }
+}
+
 RECT RegionSelectionOverlay::SelectionLabelRect(const RECT& selection, const RECT& client_rect) const {
     if (!common::HasArea(selection)) {
         return RECT{};
@@ -527,7 +606,7 @@ RECT RegionSelectionOverlay::SelectionVisualRect(const RECT& selection, const RE
     }
 
     RECT selection_bounds = selection;
-    InflateRect(&selection_bounds, 3, 3);
+    InflateRect(&selection_bounds, kSelectionHandleSize + 3, kSelectionHandleSize + 3);
     selection_bounds.left = std::clamp(selection_bounds.left, client_rect.left, client_rect.right);
     selection_bounds.top = std::clamp(selection_bounds.top, client_rect.top, client_rect.bottom);
     selection_bounds.right =
@@ -555,6 +634,74 @@ RECT RegionSelectionOverlay::ArrowPreviewRect() const {
     return common::ClampRectToBounds(bounds, snapshot_->image.Width(), snapshot_->image.Height());
 }
 
+RECT RegionSelectionOverlay::AdjustSelectionFromDrag(const POINT& point) const {
+    RECT adjusted = drag_origin_selection_;
+    const LONG dx = point.x - drag_start_.x;
+    const LONG dy = point.y - drag_start_.y;
+    const LONG minimum_size = static_cast<LONG>(kMinimumSelectionSize);
+    const LONG max_width = static_cast<LONG>(snapshot_->image.Width());
+    const LONG max_height = static_cast<LONG>(snapshot_->image.Height());
+
+    switch (adjust_handle_) {
+    case SelectionAdjustHandle::Move: {
+        OffsetRect(&adjusted, dx, dy);
+        const LONG width = adjusted.right - adjusted.left;
+        const LONG height = adjusted.bottom - adjusted.top;
+
+        if (adjusted.left < 0) {
+            adjusted.left = 0;
+            adjusted.right = width;
+        }
+        if (adjusted.top < 0) {
+            adjusted.top = 0;
+            adjusted.bottom = height;
+        }
+        if (adjusted.right > max_width) {
+            adjusted.right = max_width;
+            adjusted.left = adjusted.right - width;
+        }
+        if (adjusted.bottom > max_height) {
+            adjusted.bottom = max_height;
+            adjusted.top = adjusted.bottom - height;
+        }
+        break;
+    }
+    case SelectionAdjustHandle::Left:
+        adjusted.left = std::clamp(point.x, 0L, adjusted.right - minimum_size);
+        break;
+    case SelectionAdjustHandle::Top:
+        adjusted.top = std::clamp(point.y, 0L, adjusted.bottom - minimum_size);
+        break;
+    case SelectionAdjustHandle::Right:
+        adjusted.right = std::clamp(point.x, adjusted.left + minimum_size, max_width);
+        break;
+    case SelectionAdjustHandle::Bottom:
+        adjusted.bottom = std::clamp(point.y, adjusted.top + minimum_size, max_height);
+        break;
+    case SelectionAdjustHandle::TopLeft:
+        adjusted.left = std::clamp(point.x, 0L, adjusted.right - minimum_size);
+        adjusted.top = std::clamp(point.y, 0L, adjusted.bottom - minimum_size);
+        break;
+    case SelectionAdjustHandle::TopRight:
+        adjusted.right = std::clamp(point.x, adjusted.left + minimum_size, max_width);
+        adjusted.top = std::clamp(point.y, 0L, adjusted.bottom - minimum_size);
+        break;
+    case SelectionAdjustHandle::BottomLeft:
+        adjusted.left = std::clamp(point.x, 0L, adjusted.right - minimum_size);
+        adjusted.bottom = std::clamp(point.y, adjusted.top + minimum_size, max_height);
+        break;
+    case SelectionAdjustHandle::BottomRight:
+        adjusted.right = std::clamp(point.x, adjusted.left + minimum_size, max_width);
+        adjusted.bottom = std::clamp(point.y, adjusted.top + minimum_size, max_height);
+        break;
+    case SelectionAdjustHandle::None:
+    default:
+        break;
+    }
+
+    return adjusted;
+}
+
 void RegionSelectionOverlay::FinishSelection(bool accepted) {
     accepted_ = accepted;
     selection_ = CurrentSelection();
@@ -580,6 +727,9 @@ void RegionSelectionOverlay::ResetInteraction() {
     }
 
     interaction_mode_ = InteractionMode::None;
+    adjust_handle_ = SelectionAdjustHandle::None;
+    drag_start_ = POINT{};
+    drag_origin_selection_ = RECT{};
     preview_start_ = POINT{};
     preview_current_ = POINT{};
 }
@@ -785,16 +935,43 @@ SelectionToolbarAction RegionSelectionOverlay::ActiveToolbarAction() const {
     return SelectionToolbarAction::None;
 }
 
+bool RegionSelectionOverlay::CanUndoLastEdit() const {
+    return !edit_history_.empty();
+}
+
+void RegionSelectionOverlay::PushUndoState() {
+    if (edit_history_.size() >= kMaxUndoSteps) {
+        edit_history_.erase(edit_history_.begin());
+    }
+
+    edit_history_.push_back(working_image_);
+}
+
+void RegionSelectionOverlay::UndoLastEdit() {
+    if (!CanUndoLastEdit()) {
+        return;
+    }
+
+    working_image_ = std::move(edit_history_.back());
+    edit_history_.pop_back();
+    RebuildSourceBuffers();
+    RefreshFullFrame();
+}
+
 bool RegionSelectionOverlay::ApplyPendingMosaic(std::wstring& error_message) {
     const RECT mosaic_rect = CurrentPreviewRect();
     if (!common::HasArea(mosaic_rect)) {
         return true;
     }
 
+    PushUndoState();
     if (!editing::ImageMarkupService::ApplyMosaic(working_image_,
                                                   mosaic_rect,
                                                   kMosaicBlockSize,
                                                   error_message)) {
+        if (!edit_history_.empty()) {
+            edit_history_.pop_back();
+        }
         return false;
     }
 
@@ -807,6 +984,7 @@ bool RegionSelectionOverlay::ApplyPendingArrow(std::wstring& error_message) {
         return true;
     }
 
+    PushUndoState();
     if (!editing::ImageMarkupService::DrawArrow(working_image_,
                                                 selection_,
                                                 preview_start_,
@@ -814,6 +992,9 @@ bool RegionSelectionOverlay::ApplyPendingArrow(std::wstring& error_message) {
                                                 kArrowColor,
                                                 kArrowThickness,
                                                 error_message)) {
+        if (!edit_history_.empty()) {
+            edit_history_.pop_back();
+        }
         return false;
     }
 
@@ -856,7 +1037,7 @@ void RegionSelectionOverlay::PaintOverlay(HDC hdc, const RECT& client_rect) cons
         DrawArrowPreview(hdc);
     }
 
-    toolbar_.Paint(hdc, ActiveToolbarAction());
+    toolbar_.Paint(hdc, ActiveToolbarAction(), CanUndoLastEdit());
 }
 
 void RegionSelectionOverlay::PaintFrame(HDC hdc, const RECT& client_rect) const {
@@ -922,6 +1103,33 @@ void RegionSelectionOverlay::DrawSelectionBorder(HDC hdc, const RECT& selection)
     SelectObject(hdc, previous_brush);
     SelectObject(hdc, previous_pen);
     DeleteObject(border_pen);
+
+    if (interaction_mode_ != InteractionMode::Selecting) {
+        DrawSelectionHandles(hdc, selection);
+    }
+}
+
+void RegionSelectionOverlay::DrawSelectionHandles(HDC hdc, const RECT& selection) const {
+    static constexpr SelectionAdjustHandle kHandles[] = {
+        SelectionAdjustHandle::TopLeft,
+        SelectionAdjustHandle::Top,
+        SelectionAdjustHandle::TopRight,
+        SelectionAdjustHandle::Right,
+        SelectionAdjustHandle::BottomRight,
+        SelectionAdjustHandle::Bottom,
+        SelectionAdjustHandle::BottomLeft,
+        SelectionAdjustHandle::Left,
+    };
+
+    HBRUSH fill_brush = CreateSolidBrush(RGB(255, 255, 255));
+    HBRUSH border_brush = CreateSolidBrush(RGB(32, 32, 32));
+    for (const auto handle : kHandles) {
+        const RECT handle_rect = SelectionHandleRect(selection, handle);
+        FillRect(hdc, &handle_rect, fill_brush);
+        FrameRect(hdc, &handle_rect, border_brush);
+    }
+    DeleteObject(border_brush);
+    DeleteObject(fill_brush);
 }
 
 void RegionSelectionOverlay::DrawSelectionLabel(HDC hdc,
@@ -995,12 +1203,59 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
         return 1;
 
     case WM_SETCURSOR:
+        if (window_ != nullptr) {
+            POINT cursor_point{};
+            GetCursorPos(&cursor_point);
+            ScreenToClient(window_, &cursor_point);
+
+            if (toolbar_.HitTest(cursor_point) != SelectionToolbarAction::None) {
+                SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                return TRUE;
+            }
+
+            auto cursor_for_handle = [](SelectionAdjustHandle handle) {
+                switch (handle) {
+                case SelectionAdjustHandle::Move:
+                    return IDC_SIZEALL;
+                case SelectionAdjustHandle::Left:
+                case SelectionAdjustHandle::Right:
+                    return IDC_SIZEWE;
+                case SelectionAdjustHandle::Top:
+                case SelectionAdjustHandle::Bottom:
+                    return IDC_SIZENS;
+                case SelectionAdjustHandle::TopLeft:
+                case SelectionAdjustHandle::BottomRight:
+                    return IDC_SIZENWSE;
+                case SelectionAdjustHandle::TopRight:
+                case SelectionAdjustHandle::BottomLeft:
+                    return IDC_SIZENESW;
+                case SelectionAdjustHandle::None:
+                default:
+                    return IDC_CROSS;
+                }
+            };
+
+            if (active_tool_ == EditTool::Select && HasSelection()) {
+                const SelectionAdjustHandle handle = interaction_mode_ == InteractionMode::Adjusting
+                                                         ? adjust_handle_
+                                                         : HitTestSelectionHandle(cursor_point);
+                SetCursor(LoadCursorW(nullptr, cursor_for_handle(handle)));
+                return TRUE;
+            }
+        }
+
         SetCursor(LoadCursorW(nullptr, IDC_CROSS));
         return TRUE;
 
     case WM_KEYDOWN:
         if (w_param == VK_ESCAPE) {
             FinishSelection(false);
+            return 0;
+        }
+        if ((GetKeyState(VK_CONTROL) < 0) && (w_param == 'Z') && CanUndoLastEdit() &&
+            interaction_mode_ != InteractionMode::Selecting) {
+            ResetInteraction();
+            UndoLastEdit();
             return 0;
         }
         if (w_param == VK_RETURN && common::HasArea(selection_)) {
@@ -1027,6 +1282,12 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
             case SelectionToolbarAction::Arrow:
                 SetActiveTool(EditTool::Arrow);
                 return 0;
+            case SelectionToolbarAction::Undo:
+                if (CanUndoLastEdit()) {
+                    ResetInteraction();
+                    UndoLastEdit();
+                }
+                return 0;
             case SelectionToolbarAction::Confirm:
                 FinishSelection(true);
                 return 0;
@@ -1039,6 +1300,18 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
         }
 
         if (active_tool_ == EditTool::Select) {
+            if (common::HasArea(selection_)) {
+                const SelectionAdjustHandle hit_handle = HitTestSelectionHandle(point);
+                if (hit_handle != SelectionAdjustHandle::None) {
+                    adjust_handle_ = hit_handle;
+                    drag_start_ = point;
+                    drag_origin_selection_ = selection_;
+                    interaction_mode_ = InteractionMode::Adjusting;
+                    SetCapture(window_);
+                    return 0;
+                }
+            }
+
             toolbar_.Hide();
             const RECT previous_selection = CurrentSelection();
             const bool previous_has_selection = HasSelection();
@@ -1069,6 +1342,12 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
             current_.x = GET_X_LPARAM(l_param);
             current_.y = GET_Y_LPARAM(l_param);
             InvalidateSelectionChange(previous_selection, previous_has_selection);
+        } else if (interaction_mode_ == InteractionMode::Adjusting) {
+            const RECT previous_selection = selection_;
+            const POINT point{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)};
+            selection_ = AdjustSelectionFromDrag(point);
+            UpdateToolbarLayout();
+            InvalidateSelectionChange(previous_selection, true);
         } else if (interaction_mode_ == InteractionMode::Mosaic ||
                    interaction_mode_ == InteractionMode::Arrow) {
             const RECT previous_preview = interaction_mode_ == InteractionMode::Mosaic
@@ -1094,6 +1373,16 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
                 toolbar_.Hide();
                 RefreshFullFrame();
             }
+            return 0;
+        }
+
+        if (interaction_mode_ == InteractionMode::Adjusting) {
+            const RECT previous_selection = selection_;
+            const POINT point{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)};
+            selection_ = AdjustSelectionFromDrag(point);
+            UpdateToolbarLayout();
+            InvalidateSelectionChange(previous_selection, true);
+            ResetInteraction();
             return 0;
         }
 

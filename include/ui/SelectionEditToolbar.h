@@ -11,6 +11,7 @@ enum class SelectionToolbarAction {
     Select,
     Mosaic,
     Arrow,
+    Undo,
     Confirm,
     Cancel,
 };
@@ -23,7 +24,7 @@ public:
     bool IsVisible() const;
     const RECT& Bounds() const;
     SelectionToolbarAction HitTest(const POINT& point) const;
-    void Paint(HDC hdc, SelectionToolbarAction active_action) const;
+    void Paint(HDC hdc, SelectionToolbarAction active_action, bool can_undo) const;
 
 private:
     struct Button {
@@ -32,7 +33,7 @@ private:
         const wchar_t* label = L"";
     };
 
-    static constexpr int kButtonCount = 5;
+    static constexpr int kButtonCount = 6;
 
     std::array<Button, kButtonCount> buttons_{};
     RECT bounds_{};

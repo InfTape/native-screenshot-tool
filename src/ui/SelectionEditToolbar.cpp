@@ -14,6 +14,7 @@ constexpr COLORREF kToolbarBorder = RGB(235, 235, 235);
 constexpr COLORREF kToolbarText = RGB(255, 255, 255);
 constexpr COLORREF kToolbarActive = RGB(28, 150, 242);
 constexpr COLORREF kToolbarAction = RGB(242, 154, 28);
+constexpr COLORREF kToolbarDisabled = RGB(72, 72, 72);
 
 RECT CreateRect(int left, int top, int width, int height) {
     return RECT{left, top, left + width, top + height};
@@ -21,6 +22,10 @@ RECT CreateRect(int left, int top, int width, int height) {
 
 bool PointInRectInclusive(const RECT& rect, const POINT& point) {
     return point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom;
+}
+
+bool IsButtonEnabled(ui::SelectionToolbarAction action, bool can_undo) {
+    return action != ui::SelectionToolbarAction::Undo || can_undo;
 }
 
 }  // namespace
@@ -53,6 +58,7 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
         SelectionToolbarAction::Select,
         SelectionToolbarAction::Mosaic,
         SelectionToolbarAction::Arrow,
+        SelectionToolbarAction::Undo,
         SelectionToolbarAction::Confirm,
         SelectionToolbarAction::Cancel,
     };
@@ -60,6 +66,7 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
         L"框选",
         L"马赛克",
         L"箭头",
+        L"撤销",
         L"完成",
         L"取消",
     };
@@ -68,7 +75,8 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
     for (int index = 0; index < kButtonCount; ++index) {
         buttons_[index].action = kActions[index];
         buttons_[index].label = kLabels[index];
-        buttons_[index].bounds = CreateRect(button_left, bounds_.top + kToolbarPadding, kButtonWidth, kButtonHeight);
+        buttons_[index].bounds =
+            CreateRect(button_left, bounds_.top + kToolbarPadding, kButtonWidth, kButtonHeight);
         button_left += kButtonWidth + kButtonSpacing;
     }
 
@@ -105,7 +113,9 @@ SelectionToolbarAction SelectionEditToolbar::HitTest(const POINT& point) const {
     return SelectionToolbarAction::None;
 }
 
-void SelectionEditToolbar::Paint(HDC hdc, SelectionToolbarAction active_action) const {
+void SelectionEditToolbar::Paint(HDC hdc,
+                                 SelectionToolbarAction active_action,
+                                 bool can_undo) const {
     if (!visible_) {
         return;
     }
@@ -123,7 +133,12 @@ void SelectionEditToolbar::Paint(HDC hdc, SelectionToolbarAction active_action) 
     for (const auto& button : buttons_) {
         const bool is_active = button.action == active_action;
         const bool is_primary_action = button.action == SelectionToolbarAction::Confirm;
-        const COLORREF fill_color = is_active ? kToolbarActive : (is_primary_action ? kToolbarAction : kToolbarBackground);
+        const bool is_enabled = IsButtonEnabled(button.action, can_undo);
+        const COLORREF fill_color = !is_enabled
+                                        ? kToolbarDisabled
+                                        : (is_active ? kToolbarActive
+                                                     : (is_primary_action ? kToolbarAction
+                                                                          : kToolbarBackground));
         HBRUSH button_brush = CreateSolidBrush(fill_color);
         HBRUSH button_border = CreateSolidBrush(kToolbarBorder);
         FillRect(hdc, &button.bounds, button_brush);

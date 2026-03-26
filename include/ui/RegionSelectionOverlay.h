@@ -4,6 +4,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "capture/CapturedImage.h"
 #include "capture/DesktopSnapshot.h"
@@ -33,8 +34,22 @@ private:
     enum class InteractionMode {
         None,
         Selecting,
+        Adjusting,
         Mosaic,
         Arrow,
+    };
+
+    enum class SelectionAdjustHandle {
+        None,
+        Move,
+        Left,
+        Top,
+        Right,
+        Bottom,
+        TopLeft,
+        TopRight,
+        BottomLeft,
+        BottomRight,
     };
 
     static constexpr wchar_t kClassName[] = L"NativeScreenshot.RegionSelectionOverlay";
@@ -56,9 +71,12 @@ private:
     bool HasSelection() const;
     RECT CurrentPreviewRect() const;
     bool HasPreviewRect() const;
+    SelectionAdjustHandle HitTestSelectionHandle(const POINT& point) const;
+    RECT SelectionHandleRect(const RECT& selection, SelectionAdjustHandle handle) const;
     RECT SelectionLabelRect(const RECT& selection, const RECT& client_rect) const;
     RECT SelectionVisualRect(const RECT& selection, const RECT& client_rect) const;
     RECT ArrowPreviewRect() const;
+    RECT AdjustSelectionFromDrag(const POINT& point) const;
 
     void FinishSelection(bool accepted);
     void CommitSelection(const RECT& selection);
@@ -72,6 +90,9 @@ private:
     void UpdateToolbarLayout();
     void SetActiveTool(EditTool tool);
     SelectionToolbarAction ActiveToolbarAction() const;
+    bool CanUndoLastEdit() const;
+    void PushUndoState();
+    void UndoLastEdit();
     bool ApplyPendingMosaic(std::wstring& error_message);
     bool ApplyPendingArrow(std::wstring& error_message);
     void ShowEditError(const std::wstring& error_message) const;
@@ -81,6 +102,7 @@ private:
     void PaintFrame(HDC hdc, const RECT& client_rect) const;
     void DrawInstructions(HDC hdc, const RECT& bounds) const;
     void DrawSelectionBorder(HDC hdc, const RECT& selection) const;
+    void DrawSelectionHandles(HDC hdc, const RECT& selection) const;
     void DrawSelectionLabel(HDC hdc, const RECT& selection, const RECT& client_rect) const;
     void DrawMosaicPreview(HDC hdc) const;
     void DrawArrowPreview(HDC hdc) const;
@@ -90,6 +112,7 @@ private:
     HWND window_ = nullptr;
     const capture::DesktopSnapshot* snapshot_ = nullptr;
     capture::CapturedImage working_image_;
+    std::vector<capture::CapturedImage> edit_history_;
     bool finished_ = false;
     bool accepted_ = false;
     POINT anchor_{};
@@ -97,6 +120,9 @@ private:
     RECT selection_{};
     EditTool active_tool_ = EditTool::Select;
     InteractionMode interaction_mode_ = InteractionMode::None;
+    SelectionAdjustHandle adjust_handle_ = SelectionAdjustHandle::None;
+    POINT drag_start_{};
+    RECT drag_origin_selection_{};
     POINT preview_start_{};
     POINT preview_current_{};
     SelectionEditToolbar toolbar_;
