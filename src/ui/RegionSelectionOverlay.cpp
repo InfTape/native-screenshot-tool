@@ -76,6 +76,8 @@ std::optional<RECT> RegionSelectionOverlay::SelectRegion(const capture::DesktopS
     finished_ = false;
     accepted_ = false;
     dragging_ = false;
+    anchor_ = POINT{};
+    current_ = POINT{};
     selection_ = RECT{};
 
     if (!RegisterWindowClass()) {
