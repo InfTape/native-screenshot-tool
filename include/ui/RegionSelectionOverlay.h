@@ -28,9 +28,13 @@ private:
     void DrawDimmedRect(HDC hdc, const RECT& rect) const;
     void DrawInstructions(HDC hdc, const RECT& bounds) const;
     void DrawSelection(HDC hdc) const;
+    bool CreateBackBuffer(std::wstring& error_message);
+    void DestroyBackBuffer();
     RECT SelectionLabelRect(const RECT& selection, const RECT& client_rect) const;
     RECT SelectionVisualRect(const RECT& selection, const RECT& client_rect) const;
-    void InvalidateSelectionChange(const RECT& previous_selection, bool previous_has_selection) const;
+    void UpdateBackBuffer(const RECT& dirty_rect);
+    void RefreshDirtyRect(const RECT& dirty_rect);
+    void InvalidateSelectionChange(const RECT& previous_selection, bool previous_has_selection);
     void PaintFrame(HDC hdc, const RECT& client_rect) const;
     LRESULT HandleMessage(UINT message, WPARAM w_param, LPARAM l_param);
 
@@ -43,6 +47,10 @@ private:
     POINT anchor_{};
     POINT current_{};
     RECT selection_{};
+    HDC back_buffer_dc_ = nullptr;
+    HBITMAP back_buffer_bitmap_ = nullptr;
+    HGDIOBJ back_buffer_previous_bitmap_ = nullptr;
+    SIZE back_buffer_size_{};
 };
 
 }  // namespace ui

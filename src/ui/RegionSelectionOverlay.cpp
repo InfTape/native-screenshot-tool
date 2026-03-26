@@ -104,6 +104,13 @@ std::optional<RECT> RegionSelectionOverlay::SelectRegion(const capture::DesktopS
         return std::nullopt;
     }
 
+    if (!CreateBackBuffer(error_message)) {
+        DestroyWindow(window_);
+        window_ = nullptr;
+        snapshot_ = nullptr;
+        return std::nullopt;
+    }
+
     ShowWindow(window_, SW_SHOW);
     UpdateWindow(window_);
     SetForegroundWindow(window_);
@@ -136,6 +143,7 @@ std::optional<RECT> RegionSelectionOverlay::SelectRegion(const capture::DesktopS
         window_ = nullptr;
     }
 
+    DestroyBackBuffer();
     snapshot_ = nullptr;
     return result;
 }
@@ -251,6 +259,77 @@ void RegionSelectionOverlay::DrawSelection(HDC hdc) const {
     DrawTextW(hdc, size_text.c_str(), -1, &text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
+bool RegionSelectionOverlay::CreateBackBuffer(std::wstring& error_message) {
+    DestroyBackBuffer();
+
+    if (window_ == nullptr || snapshot_ == nullptr) {
+        error_message = L"Failed to initialize region back buffer.";
+        return false;
+    }
+
+    HDC window_dc = GetDC(window_);
+    if (window_dc == nullptr) {
+        error_message =
+            L"Failed to acquire the overlay window DC.\n\n" + common::GetLastErrorMessage(GetLastError());
+        return false;
+    }
+
+    back_buffer_dc_ = CreateCompatibleDC(window_dc);
+    if (back_buffer_dc_ == nullptr) {
+        error_message =
+            L"Failed to create the region back buffer DC.\n\n" + common::GetLastErrorMessage(GetLastError());
+        ReleaseDC(window_, window_dc);
+        return false;
+    }
+
+    back_buffer_bitmap_ =
+        CreateCompatibleBitmap(window_dc, snapshot_->image.Width(), snapshot_->image.Height());
+    ReleaseDC(window_, window_dc);
+
+    if (back_buffer_bitmap_ == nullptr) {
+        error_message = L"Failed to create the region back buffer bitmap.\n\n" +
+                        common::GetLastErrorMessage(GetLastError());
+        DestroyBackBuffer();
+        return false;
+    }
+
+    back_buffer_previous_bitmap_ = SelectObject(back_buffer_dc_, back_buffer_bitmap_);
+    if (back_buffer_previous_bitmap_ == nullptr || back_buffer_previous_bitmap_ == HGDI_ERROR) {
+        error_message = L"Failed to bind the region back buffer bitmap.\n\n" +
+                        common::GetLastErrorMessage(GetLastError());
+        DestroyBackBuffer();
+        return false;
+    }
+
+    back_buffer_size_.cx = snapshot_->image.Width();
+    back_buffer_size_.cy = snapshot_->image.Height();
+
+    const RECT full_rect{0, 0, back_buffer_size_.cx, back_buffer_size_.cy};
+    UpdateBackBuffer(full_rect);
+    return true;
+}
+
+void RegionSelectionOverlay::DestroyBackBuffer() {
+    if (back_buffer_dc_ != nullptr && back_buffer_previous_bitmap_ != nullptr &&
+        back_buffer_previous_bitmap_ != HGDI_ERROR) {
+        SelectObject(back_buffer_dc_, back_buffer_previous_bitmap_);
+    }
+
+    back_buffer_previous_bitmap_ = nullptr;
+
+    if (back_buffer_bitmap_ != nullptr) {
+        DeleteObject(back_buffer_bitmap_);
+        back_buffer_bitmap_ = nullptr;
+    }
+
+    if (back_buffer_dc_ != nullptr) {
+        DeleteDC(back_buffer_dc_);
+        back_buffer_dc_ = nullptr;
+    }
+
+    back_buffer_size_ = SIZE{};
+}
+
 RECT RegionSelectionOverlay::SelectionLabelRect(const RECT& selection,
                                                 const RECT& client_rect) const {
     if (!common::HasArea(selection)) {
@@ -299,8 +378,44 @@ RECT RegionSelectionOverlay::SelectionVisualRect(const RECT& selection, const RE
     return visual_rect;
 }
 
+void RegionSelectionOverlay::UpdateBackBuffer(const RECT& dirty_rect) {
+    if (back_buffer_dc_ == nullptr || snapshot_ == nullptr) {
+        return;
+    }
+
+    RECT clamped_dirty_rect =
+        common::ClampRectToBounds(dirty_rect, back_buffer_size_.cx, back_buffer_size_.cy);
+    if (!common::HasArea(clamped_dirty_rect)) {
+        return;
+    }
+
+    const RECT client_rect{0, 0, back_buffer_size_.cx, back_buffer_size_.cy};
+    const int saved_dc = SaveDC(back_buffer_dc_);
+    if (saved_dc == 0) {
+        PaintFrame(back_buffer_dc_, client_rect);
+        return;
+    }
+
+    IntersectClipRect(back_buffer_dc_,
+                      clamped_dirty_rect.left,
+                      clamped_dirty_rect.top,
+                      clamped_dirty_rect.right,
+                      clamped_dirty_rect.bottom);
+    PaintFrame(back_buffer_dc_, client_rect);
+    RestoreDC(back_buffer_dc_, saved_dc);
+}
+
+void RegionSelectionOverlay::RefreshDirtyRect(const RECT& dirty_rect) {
+    if (!common::HasArea(dirty_rect) || window_ == nullptr) {
+        return;
+    }
+
+    UpdateBackBuffer(dirty_rect);
+    InvalidateRect(window_, &dirty_rect, FALSE);
+}
+
 void RegionSelectionOverlay::InvalidateSelectionChange(const RECT& previous_selection,
-                                                       bool previous_has_selection) const {
+                                                       bool previous_has_selection) {
     if (window_ == nullptr) {
         return;
     }
@@ -314,30 +429,43 @@ void RegionSelectionOverlay::InvalidateSelectionChange(const RECT& previous_sele
     RECT client_rect{};
     GetClientRect(window_, &client_rect);
 
-    RECT dirty_rect{};
-    bool has_dirty_rect = false;
-    if (previous_has_selection) {
-        dirty_rect = SelectionVisualRect(previous_selection, client_rect);
-        has_dirty_rect = common::HasArea(dirty_rect);
+    if (!previous_has_selection || !current_has_selection) {
+        const RECT dirty_rect = previous_has_selection
+                                    ? SelectionVisualRect(previous_selection, client_rect)
+                                    : SelectionVisualRect(current_selection, client_rect);
+        RefreshDirtyRect(dirty_rect);
+        return;
     }
 
-    if (current_has_selection) {
-        const RECT current_dirty_rect = SelectionVisualRect(current_selection, client_rect);
-        if (common::HasArea(current_dirty_rect)) {
-            if (has_dirty_rect) {
-                RECT union_rect{};
-                UnionRect(&union_rect, &dirty_rect, &current_dirty_rect);
-                dirty_rect = union_rect;
-            } else {
-                dirty_rect = current_dirty_rect;
-                has_dirty_rect = true;
-            }
-        }
-    }
+    const RECT previous_visual_rect = SelectionVisualRect(previous_selection, client_rect);
+    const RECT current_visual_rect = SelectionVisualRect(current_selection, client_rect);
 
-    if (has_dirty_rect) {
-        InvalidateRect(window_, &dirty_rect, FALSE);
-    }
+    const RECT top_band{client_rect.left,
+                        std::min(previous_selection.top, current_selection.top),
+                        client_rect.right,
+                        std::max(previous_selection.top, current_selection.top)};
+    const RECT bottom_band{client_rect.left,
+                           std::min(previous_selection.bottom, current_selection.bottom),
+                           client_rect.right,
+                           std::max(previous_selection.bottom, current_selection.bottom)};
+
+    const LONG vertical_top = std::min(previous_selection.top, current_selection.top);
+    const LONG vertical_bottom = std::max(previous_selection.bottom, current_selection.bottom);
+    const RECT left_band{std::min(previous_selection.left, current_selection.left),
+                         vertical_top,
+                         std::max(previous_selection.left, current_selection.left),
+                         vertical_bottom};
+    const RECT right_band{std::min(previous_selection.right, current_selection.right),
+                          vertical_top,
+                          std::max(previous_selection.right, current_selection.right),
+                          vertical_bottom};
+
+    RefreshDirtyRect(previous_visual_rect);
+    RefreshDirtyRect(current_visual_rect);
+    RefreshDirtyRect(top_band);
+    RefreshDirtyRect(bottom_band);
+    RefreshDirtyRect(left_band);
+    RefreshDirtyRect(right_band);
 }
 
 void RegionSelectionOverlay::PaintFrame(HDC hdc, const RECT& client_rect) const {
@@ -444,41 +572,22 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
         PAINTSTRUCT paint_struct{};
         HDC hdc = BeginPaint(window_, &paint_struct);
 
-        RECT client_rect{};
-        GetClientRect(window_, &client_rect);
-
         const int paint_width = common::RectWidth(paint_struct.rcPaint);
         const int paint_height = common::RectHeight(paint_struct.rcPaint);
-        if (paint_width > 0 && paint_height > 0) {
-            HDC memory_dc = CreateCompatibleDC(hdc);
-            HBITMAP bitmap =
-                memory_dc == nullptr ? nullptr : CreateCompatibleBitmap(hdc, paint_width, paint_height);
-
-            if (memory_dc != nullptr && bitmap != nullptr) {
-                const HGDIOBJ previous_bitmap = SelectObject(memory_dc, bitmap);
-                SetViewportOrgEx(memory_dc, -paint_struct.rcPaint.left, -paint_struct.rcPaint.top, nullptr);
-                PaintFrame(memory_dc, client_rect);
-                SetViewportOrgEx(memory_dc, 0, 0, nullptr);
-                BitBlt(hdc,
-                       paint_struct.rcPaint.left,
-                       paint_struct.rcPaint.top,
-                       paint_width,
-                       paint_height,
-                       memory_dc,
-                       0,
-                       0,
-                       SRCCOPY);
-                SelectObject(memory_dc, previous_bitmap);
-            } else {
-                PaintFrame(hdc, client_rect);
-            }
-
-            if (bitmap != nullptr) {
-                DeleteObject(bitmap);
-            }
-            if (memory_dc != nullptr) {
-                DeleteDC(memory_dc);
-            }
+        if (paint_width > 0 && paint_height > 0 && back_buffer_dc_ != nullptr) {
+            BitBlt(hdc,
+                   paint_struct.rcPaint.left,
+                   paint_struct.rcPaint.top,
+                   paint_width,
+                   paint_height,
+                   back_buffer_dc_,
+                   paint_struct.rcPaint.left,
+                   paint_struct.rcPaint.top,
+                   SRCCOPY);
+        } else if (snapshot_ != nullptr) {
+            RECT client_rect{};
+            GetClientRect(window_, &client_rect);
+            PaintFrame(hdc, client_rect);
         }
 
         EndPaint(window_, &paint_struct);
@@ -490,6 +599,7 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
         return 0;
 
     case WM_DESTROY:
+        DestroyBackBuffer();
         finished_ = true;
         return 0;
 
