@@ -600,7 +600,10 @@ RECT RegionSelectionOverlay::SelectionLabelRect(const RECT& selection, const REC
     return label_rect;
 }
 
-RECT RegionSelectionOverlay::SelectionVisualRect(const RECT& selection, const RECT& client_rect) const {
+RECT RegionSelectionOverlay::SelectionVisualRect(const RECT& selection,
+                                                 const RECT& client_rect,
+                                                 const RECT& toolbar_rect,
+                                                 bool include_toolbar) const {
     if (!common::HasArea(selection)) {
         return RECT{};
     }
@@ -615,10 +618,13 @@ RECT RegionSelectionOverlay::SelectionVisualRect(const RECT& selection, const RE
         std::clamp(selection_bounds.bottom, client_rect.top, client_rect.bottom);
 
     const RECT label_rect = SelectionLabelRect(selection, client_rect);
-    const RECT toolbar_rect = toolbar_.IsVisible() ? toolbar_.Bounds() : RECT{};
 
     RECT selection_and_label{};
     UnionRect(&selection_and_label, &selection_bounds, &label_rect);
+    if (!include_toolbar || !common::HasArea(toolbar_rect)) {
+        return selection_and_label;
+    }
+
     RECT visual_rect{};
     UnionRect(&visual_rect, &selection_and_label, &toolbar_rect);
     return visual_rect;
@@ -857,7 +863,9 @@ void RegionSelectionOverlay::UpdateBackBuffer(const RECT& dirty_rect) {
 }
 
 void RegionSelectionOverlay::InvalidateSelectionChange(const RECT& previous_selection,
-                                                       bool previous_has_selection) {
+                                                       bool previous_has_selection,
+                                                       const RECT& previous_toolbar_rect,
+                                                       bool previous_toolbar_visible) {
     if (window_ == nullptr) {
         return;
     }
@@ -867,13 +875,16 @@ void RegionSelectionOverlay::InvalidateSelectionChange(const RECT& previous_sele
 
     RECT previous_visual_rect{};
     if (previous_has_selection) {
-        previous_visual_rect = SelectionVisualRect(previous_selection, client_rect);
+        previous_visual_rect = SelectionVisualRect(
+            previous_selection, client_rect, previous_toolbar_rect, previous_toolbar_visible);
     }
 
     RECT current_visual_rect{};
     const bool current_has_selection = HasSelection();
     if (current_has_selection) {
-        current_visual_rect = SelectionVisualRect(CurrentSelection(), client_rect);
+        const RECT current_toolbar_rect = toolbar_.IsVisible() ? toolbar_.Bounds() : RECT{};
+        current_visual_rect =
+            SelectionVisualRect(CurrentSelection(), client_rect, current_toolbar_rect, toolbar_.IsVisible());
     }
 
     const RECT dirty_rect =
@@ -1312,14 +1323,19 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
                 }
             }
 
-            toolbar_.Hide();
             const RECT previous_selection = CurrentSelection();
             const bool previous_has_selection = HasSelection();
+            const RECT previous_toolbar_rect = toolbar_.IsVisible() ? toolbar_.Bounds() : RECT{};
+            const bool previous_toolbar_visible = toolbar_.IsVisible();
+            toolbar_.Hide();
             anchor_ = point;
             current_ = point;
             interaction_mode_ = InteractionMode::Selecting;
             SetCapture(window_);
-            InvalidateSelectionChange(previous_selection, previous_has_selection);
+            InvalidateSelectionChange(previous_selection,
+                                      previous_has_selection,
+                                      previous_toolbar_rect,
+                                      previous_toolbar_visible);
             return 0;
         }
 
@@ -1339,15 +1355,25 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
         if (interaction_mode_ == InteractionMode::Selecting) {
             const RECT previous_selection = CurrentSelection();
             const bool previous_has_selection = HasSelection();
+            const RECT previous_toolbar_rect = RECT{};
+            const bool previous_toolbar_visible = false;
             current_.x = GET_X_LPARAM(l_param);
             current_.y = GET_Y_LPARAM(l_param);
-            InvalidateSelectionChange(previous_selection, previous_has_selection);
+            InvalidateSelectionChange(previous_selection,
+                                      previous_has_selection,
+                                      previous_toolbar_rect,
+                                      previous_toolbar_visible);
         } else if (interaction_mode_ == InteractionMode::Adjusting) {
             const RECT previous_selection = selection_;
+            const RECT previous_toolbar_rect = toolbar_.IsVisible() ? toolbar_.Bounds() : RECT{};
+            const bool previous_toolbar_visible = toolbar_.IsVisible();
             const POINT point{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)};
             selection_ = AdjustSelectionFromDrag(point);
             UpdateToolbarLayout();
-            InvalidateSelectionChange(previous_selection, true);
+            InvalidateSelectionChange(previous_selection,
+                                      true,
+                                      previous_toolbar_rect,
+                                      previous_toolbar_visible);
         } else if (interaction_mode_ == InteractionMode::Mosaic ||
                    interaction_mode_ == InteractionMode::Arrow) {
             const RECT previous_preview = interaction_mode_ == InteractionMode::Mosaic
@@ -1378,10 +1404,15 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
 
         if (interaction_mode_ == InteractionMode::Adjusting) {
             const RECT previous_selection = selection_;
+            const RECT previous_toolbar_rect = toolbar_.IsVisible() ? toolbar_.Bounds() : RECT{};
+            const bool previous_toolbar_visible = toolbar_.IsVisible();
             const POINT point{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)};
             selection_ = AdjustSelectionFromDrag(point);
             UpdateToolbarLayout();
-            InvalidateSelectionChange(previous_selection, true);
+            InvalidateSelectionChange(previous_selection,
+                                      true,
+                                      previous_toolbar_rect,
+                                      previous_toolbar_visible);
             ResetInteraction();
             return 0;
         }

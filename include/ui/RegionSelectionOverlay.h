@@ -74,7 +74,10 @@ private:
     SelectionAdjustHandle HitTestSelectionHandle(const POINT& point) const;
     RECT SelectionHandleRect(const RECT& selection, SelectionAdjustHandle handle) const;
     RECT SelectionLabelRect(const RECT& selection, const RECT& client_rect) const;
-    RECT SelectionVisualRect(const RECT& selection, const RECT& client_rect) const;
+    RECT SelectionVisualRect(const RECT& selection,
+                             const RECT& client_rect,
+                             const RECT& toolbar_rect,
+                             bool include_toolbar) const;
     RECT ArrowPreviewRect() const;
     RECT AdjustSelectionFromDrag(const POINT& point) const;
 
@@ -85,7 +88,10 @@ private:
     void RefreshDirtyRect(const RECT& dirty_rect);
     void FlushPendingDirtyRegion();
     void UpdateBackBuffer(const RECT& dirty_rect);
-    void InvalidateSelectionChange(const RECT& previous_selection, bool previous_has_selection);
+    void InvalidateSelectionChange(const RECT& previous_selection,
+                                   bool previous_has_selection,
+                                   const RECT& previous_toolbar_rect,
+                                   bool previous_toolbar_visible);
     void InvalidatePreviewChange(const RECT& previous_preview, bool previous_has_preview);
     void UpdateToolbarLayout();
     void SetActiveTool(EditTool tool);
