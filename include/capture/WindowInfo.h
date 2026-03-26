@@ -9,6 +9,7 @@ namespace capture {
 struct WindowInfo {
     HWND handle = nullptr;
     RECT bounds{};
+    RECT window_rect{};
     std::wstring title;
 };
 

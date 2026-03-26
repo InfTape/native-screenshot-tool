@@ -74,8 +74,10 @@ std::optional<CapturedImage> WindowCaptureService::CaptureWindow(
 std::optional<CapturedImage> WindowCaptureService::CaptureWithPrintWindow(
     const WindowInfo& window,
     std::wstring& error_message) const {
-    const int width = common::RectWidth(window.bounds);
-    const int height = common::RectHeight(window.bounds);
+    const RECT capture_bounds =
+        common::HasArea(window.window_rect) ? window.window_rect : window.bounds;
+    const int width = common::RectWidth(capture_bounds);
+    const int height = common::RectHeight(capture_bounds);
     if (width <= 0 || height <= 0) {
         error_message = L"目标窗口尺寸无效。";
         return std::nullopt;
@@ -135,7 +137,19 @@ std::optional<CapturedImage> WindowCaptureService::CaptureWithPrintWindow(
     std::vector<std::uint8_t> pixels(pixel_bytes);
     std::memcpy(pixels.data(), raw_pixels, pixel_bytes);
 
-    return CapturedImage(width, height, std::move(pixels));
+    CapturedImage captured_image(width, height, std::move(pixels));
+
+    RECT visible_bounds = window.bounds;
+    OffsetRect(&visible_bounds, -capture_bounds.left, -capture_bounds.top);
+
+    std::wstring crop_error_message;
+    auto cropped_image = captured_image.Crop(visible_bounds, crop_error_message);
+    if (!cropped_image.has_value()) {
+        error_message = L"PrintWindow 鎴浘鍚庤鍓彲瑙佸尯鍩熷け璐ャ€俓n\n" + crop_error_message;
+        return std::nullopt;
+    }
+
+    return cropped_image;
 }
 
 std::optional<CapturedImage> WindowCaptureService::CaptureFromSnapshot(

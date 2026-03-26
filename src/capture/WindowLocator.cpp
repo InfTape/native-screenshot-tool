@@ -79,9 +79,15 @@ std::optional<WindowInfo> WindowLocator::DescribeWindow(HWND window) const {
         return std::nullopt;
     }
 
-    RECT bounds{};
-    if (!TryGetExtendedFrameBounds(window, bounds) && !GetWindowRect(window, &bounds)) {
+    RECT window_rect{};
+    if (!GetWindowRect(window, &window_rect) && !TryGetExtendedFrameBounds(window, window_rect)) {
         return std::nullopt;
+    }
+
+    RECT bounds = window_rect;
+    RECT extended_frame_bounds{};
+    if (TryGetExtendedFrameBounds(window, extended_frame_bounds)) {
+        bounds = extended_frame_bounds;
     }
 
     if (!common::HasArea(bounds)) {
@@ -91,6 +97,7 @@ std::optional<WindowInfo> WindowLocator::DescribeWindow(HWND window) const {
     WindowInfo info{};
     info.handle = window;
     info.bounds = bounds;
+    info.window_rect = window_rect;
     info.title = ReadWindowTitle(window);
     return info;
 }
