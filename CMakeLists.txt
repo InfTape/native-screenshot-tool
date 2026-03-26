@@ -21,7 +21,10 @@ add_executable(NativeScreenshot WIN32
     src/capture/ScreenCaptureService.cpp
     src/capture/WindowLocator.cpp
     src/capture/WindowCaptureService.cpp
+    src/capture/AutoSaveService.cpp
     src/capture/BitmapFileWriter.cpp
+    src/capture/ImageClipboardWriter.cpp
+    src/capture/ImageFileWriter.cpp
     src/settings/SettingsRepository.cpp
     src/common/DpiAwareness.cpp
     src/common/RectUtils.cpp
@@ -41,7 +44,11 @@ add_executable(NativeScreenshot WIN32
     include/capture/WindowInfo.h
     include/capture/WindowLocator.h
     include/capture/WindowCaptureService.h
+    include/capture/AutoSaveService.h
     include/capture/BitmapFileWriter.h
+    include/capture/ImageClipboardWriter.h
+    include/capture/ImageFileFormat.h
+    include/capture/ImageFileWriter.h
     include/settings/AppSettings.h
     include/settings/SettingsRepository.h
     include/common/DpiAwareness.h
@@ -70,6 +77,8 @@ target_link_libraries(NativeScreenshot PRIVATE
     Dwmapi
     Gdi32
     Msimg32
+    Ole32
     Shell32
     User32
+    Windowscodecs
 )

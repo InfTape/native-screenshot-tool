@@ -1,11 +1,14 @@
 ﻿#include "ui/MainWindow.h"
 
 #include <Windows.h>
-#include <commdlg.h>
+#include <shobjidl.h>
+#include <shlobj.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -17,8 +20,10 @@ namespace {
 constexpr int kFullCaptureButtonId = 1001;
 constexpr int kRegionCaptureButtonId = 1002;
 constexpr int kWindowCaptureButtonId = 1003;
-constexpr int kSaveButtonId = 1004;
-constexpr int kClearButtonId = 1005;
+constexpr int kSaveDirectoryButtonId = 1004;
+constexpr int kSaveFormatComboId = 1005;
+constexpr int kSaveButtonId = 1006;
+constexpr int kClearButtonId = 1007;
 constexpr int kFullHotkeyButtonId = 1011;
 constexpr int kRegionHotkeyButtonId = 1012;
 constexpr int kWindowHotkeyButtonId = 1013;
@@ -33,12 +38,15 @@ constexpr int kMinWindowWidth = 980;
 constexpr int kMinWindowHeight = 620;
 constexpr int kMargin = 16;
 constexpr int kButtonWidth = 132;
+constexpr int kDirectoryButtonWidth = 148;
 constexpr int kSmallButtonWidth = 96;
 constexpr int kHotkeyButtonWidth = 168;
 constexpr int kButtonHeight = 32;
+constexpr int kComboBoxHeight = 220;
 constexpr int kGap = 10;
 constexpr int kStatusHeight = 24;
 constexpr int kHotkeyLabelHeight = 24;
+constexpr int kSaveFormatComboWidth = 110;
 
 struct ScopedBooleanReset {
     explicit ScopedBooleanReset(bool& value) : value_(value) {
@@ -50,6 +58,23 @@ struct ScopedBooleanReset {
     }
 
     bool& value_;
+};
+
+struct ScopedComInitialization {
+    ScopedComInitialization() : result_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {}
+
+    ~ScopedComInitialization() {
+        if (result_ == S_OK || result_ == S_FALSE) {
+            CoUninitialize();
+        }
+    }
+
+    bool IsAvailable() const {
+        return result_ == S_OK || result_ == S_FALSE || result_ == RPC_E_CHANGED_MODE;
+    }
+
+private:
+    HRESULT result_ = E_FAIL;
 };
 
 constexpr std::array<ui::HotkeySlot, 3> kConfigurableHotkeySlots = {
@@ -176,6 +201,24 @@ bool SameHotkey(const hotkey::HotkeyDefinition& left, const hotkey::HotkeyDefini
     return left.modifiers == right.modifiers && left.virtual_key == right.virtual_key;
 }
 
+const wchar_t* FormatDisplayName(capture::ImageFileFormat format) {
+    switch (format) {
+    case capture::ImageFileFormat::Bmp:
+        return L"BMP";
+    case capture::ImageFileFormat::Png:
+    default:
+        return L"PNG";
+    }
+}
+
+int SaveFormatComboIndex(capture::ImageFileFormat format) {
+    return format == capture::ImageFileFormat::Bmp ? 1 : 0;
+}
+
+capture::ImageFileFormat SaveFormatFromComboIndex(int combo_index) {
+    return combo_index == 1 ? capture::ImageFileFormat::Bmp : capture::ImageFileFormat::Png;
+}
+
 }  // namespace
 
 namespace ui {
@@ -283,15 +326,56 @@ bool MainWindow::CreateChildControls() {
                                              window_,
                                              reinterpret_cast<HMENU>(
                                                  static_cast<INT_PTR>(kWindowCaptureButtonId)),
+                                              instance_,
+                                              nullptr);
+
+    save_directory_button_ = CreateWindowExW(0,
+                                             L"BUTTON",
+                                             L"设置保存目录",
+                                             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                             0,
+                                             0,
+                                             0,
+                                             0,
+                                             window_,
+                                             reinterpret_cast<HMENU>(
+                                                 static_cast<INT_PTR>(kSaveDirectoryButtonId)),
                                              instance_,
                                              nullptr);
 
+    save_directory_label_ = CreateWindowExW(0,
+                                            L"STATIC",
+                                            L"保存目录：",
+                                            WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            window_,
+                                            nullptr,
+                                            instance_,
+                                            nullptr);
+
+    save_format_combo_ = CreateWindowExW(0,
+                                         L"COMBOBOX",
+                                         L"",
+                                         WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+                                         0,
+                                         0,
+                                         0,
+                                         0,
+                                         window_,
+                                         reinterpret_cast<HMENU>(
+                                             static_cast<INT_PTR>(kSaveFormatComboId)),
+                                         instance_,
+                                         nullptr);
+
     save_button_ = CreateWindowExW(0,
                                    L"BUTTON",
-                                   L"保存 BMP",
+                                   L"立即保存",
                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                                   0,
-                                   0,
+                                    0,
+                                    0,
                                    0,
                                    0,
                                    window_,
@@ -358,10 +442,14 @@ bool MainWindow::CreateChildControls() {
                                     nullptr);
 
     if (full_capture_button_ == nullptr || region_capture_button_ == nullptr ||
-        window_capture_button_ == nullptr || save_button_ == nullptr ||
-        clear_button_ == nullptr || status_label_ == nullptr) {
+        window_capture_button_ == nullptr || save_directory_button_ == nullptr ||
+        save_directory_label_ == nullptr || save_format_combo_ == nullptr ||
+        save_button_ == nullptr || clear_button_ == nullptr || status_label_ == nullptr) {
         return false;
     }
+
+    SendMessageW(save_format_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"PNG"));
+    SendMessageW(save_format_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"BMP"));
 
     for (const HWND button : hotkey_buttons_) {
         if (button == nullptr) {
@@ -389,6 +477,10 @@ bool MainWindow::InitializeHotkeySettings() {
         MessageBoxW(window_, error_message.c_str(), L"读取设置失败", MB_OK | MB_ICONWARNING);
     }
 
+    EnsureSaveDirectoryConfigured();
+    UpdateSaveSettingsDisplay();
+    UpdateSaveButtonLabel();
+
     if (!RegisterConfiguredHotkeys(true)) {
         UpdateStatus(L"部分快捷键注册失败，请重新设置未被占用的组合键。");
         return false;
@@ -406,6 +498,200 @@ bool MainWindow::InitializeTrayIcon() {
 
     taskbar_created_message_ = RegisterWindowMessageW(L"TaskbarCreated");
     return true;
+}
+
+bool MainWindow::SaveImageToConfiguredDirectory(const capture::CapturedImage& image,
+                                                std::wstring& saved_path,
+                                                std::wstring& error_message,
+                                                bool& clipboard_failed) const {
+    saved_path.clear();
+    error_message.clear();
+    clipboard_failed = false;
+
+    if (image.IsEmpty()) {
+        error_message = L"当前没有可保存的截图。";
+        return false;
+    }
+
+    capture::AutoSaveOptions options;
+    options.directory = settings_.save_directory;
+    options.format = settings_.save_format;
+
+    const auto result = auto_save_service_.SaveImage(window_, image, options, error_message);
+    saved_path = result.saved_path;
+    if (result.status == capture::AutoSaveStatus::SavedAndCopied) {
+        return true;
+    }
+
+    if (result.status == capture::AutoSaveStatus::ClipboardFailed) {
+        clipboard_failed = true;
+        return true;
+    }
+
+    return false;
+}
+
+void MainWindow::UpdateSaveSettingsDisplay() const {
+    if (save_directory_label_ != nullptr) {
+        const std::wstring text = settings_.save_directory.empty()
+                                      ? L"保存目录：未设置"
+                                      : L"保存目录：" + settings_.save_directory;
+        SetWindowTextW(save_directory_label_, text.c_str());
+    }
+
+    if (save_format_combo_ != nullptr) {
+        SendMessageW(
+            save_format_combo_, CB_SETCURSEL, SaveFormatComboIndex(settings_.save_format), 0);
+    }
+}
+
+void MainWindow::UpdateSaveButtonLabel() const {
+    if (save_button_ != nullptr) {
+        const std::wstring text = std::wstring(L"立即保存 ") + FormatDisplayName(settings_.save_format);
+        SetWindowTextW(save_button_, text.c_str());
+    }
+}
+
+bool MainWindow::ResolveDefaultSaveDirectory(std::wstring& directory,
+                                             std::wstring& error_message) const {
+    directory.clear();
+    error_message.clear();
+
+    PWSTR known_folder_path = nullptr;
+    HRESULT hr = SHGetKnownFolderPath(FOLDERID_Pictures, KF_FLAG_DEFAULT, nullptr, &known_folder_path);
+    if (SUCCEEDED(hr) && known_folder_path != nullptr) {
+        std::filesystem::path pictures_path(known_folder_path);
+        CoTaskMemFree(known_folder_path);
+        directory = (pictures_path / L"NativeScreenshot").wstring();
+        return true;
+    }
+
+    if (known_folder_path != nullptr) {
+        CoTaskMemFree(known_folder_path);
+    }
+
+    DWORD required_size = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
+    if (required_size > 0) {
+        std::vector<wchar_t> buffer(required_size);
+        if (GetEnvironmentVariableW(L"LOCALAPPDATA", buffer.data(), required_size) > 0) {
+            directory = (std::filesystem::path(buffer.data()) / L"NativeScreenshot" / L"Captures").wstring();
+            return true;
+        }
+    }
+
+    error_message = L"无法解析默认保存目录。";
+    return false;
+}
+
+bool MainWindow::EnsureSaveDirectoryConfigured() {
+    if (!settings_.save_directory.empty()) {
+        return true;
+    }
+
+    std::wstring default_directory;
+    std::wstring error_message;
+    if (!ResolveDefaultSaveDirectory(default_directory, error_message)) {
+        MessageBoxW(window_, error_message.c_str(), L"设置保存目录失败", MB_OK | MB_ICONWARNING);
+        return false;
+    }
+
+    settings_.save_directory = default_directory;
+    if (!settings_repository_.Save(settings_, error_message)) {
+        MessageBoxW(window_, error_message.c_str(), L"保存设置失败", MB_OK | MB_ICONWARNING);
+    }
+    return true;
+}
+
+bool MainWindow::ChooseSaveDirectory(std::wstring& selected_directory) const {
+    selected_directory.clear();
+
+    ScopedComInitialization com_initialization;
+    if (!com_initialization.IsAvailable()) {
+        MessageBoxW(window_, L"初始化目录选择器失败。", L"选择目录失败", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    IFileDialog* dialog = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(hr) || dialog == nullptr) {
+        MessageBoxW(window_, L"创建目录选择器失败。", L"选择目录失败", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    dialog->SetTitle(L"选择截图保存目录");
+
+    if (!settings_.save_directory.empty()) {
+        IShellItem* default_folder = nullptr;
+        hr = SHCreateItemFromParsingName(
+            settings_.save_directory.c_str(), nullptr, IID_PPV_ARGS(&default_folder));
+        if (SUCCEEDED(hr) && default_folder != nullptr) {
+            dialog->SetDefaultFolder(default_folder);
+            dialog->SetFolder(default_folder);
+            default_folder->Release();
+        }
+    }
+
+    hr = dialog->Show(window_);
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        dialog->Release();
+        return false;
+    }
+
+    if (FAILED(hr)) {
+        dialog->Release();
+        MessageBoxW(window_, L"打开目录选择器失败。", L"选择目录失败", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    IShellItem* folder = nullptr;
+    hr = dialog->GetResult(&folder);
+    dialog->Release();
+    if (FAILED(hr) || folder == nullptr) {
+        MessageBoxW(window_, L"读取目录选择结果失败。", L"选择目录失败", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    PWSTR folder_path = nullptr;
+    hr = folder->GetDisplayName(SIGDN_FILESYSPATH, &folder_path);
+    folder->Release();
+    if (FAILED(hr) || folder_path == nullptr) {
+        MessageBoxW(window_, L"解析目录路径失败。", L"选择目录失败", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    selected_directory = folder_path;
+    CoTaskMemFree(folder_path);
+    return true;
+}
+
+void MainWindow::ApplySaveFormatSelection() {
+    const int selected_index = static_cast<int>(SendMessageW(save_format_combo_, CB_GETCURSEL, 0, 0));
+    if (selected_index == CB_ERR) {
+        return;
+    }
+
+    const auto new_format = SaveFormatFromComboIndex(selected_index);
+    if (new_format == settings_.save_format) {
+        return;
+    }
+
+    const auto previous_format = settings_.save_format;
+    settings_.save_format = new_format;
+
+    std::wstring error_message;
+    if (!settings_repository_.Save(settings_, error_message)) {
+        settings_.save_format = previous_format;
+        UpdateSaveSettingsDisplay();
+        MessageBoxW(window_, error_message.c_str(), L"保存设置失败", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    UpdateSaveSettingsDisplay();
+    UpdateSaveButtonLabel();
+    UpdateStatus(std::wstring(L"默认保存格式已切换为 ") + FormatDisplayName(settings_.save_format) + L"。");
 }
 
 RECT MainWindow::CalculatePreviewRect(int client_width, int client_height) const {
@@ -435,6 +721,22 @@ void MainWindow::LayoutControls(int client_width, int client_height) {
     x += kButtonWidth + kGap;
 
     MoveWindow(clear_button_, x, y, kSmallButtonWidth, kButtonHeight, TRUE);
+
+    y += kButtonHeight + kGap;
+
+    x = kMargin;
+    MoveWindow(save_directory_button_, x, y, kDirectoryButtonWidth, kButtonHeight, TRUE);
+    x += kDirectoryButtonWidth + kGap;
+
+    MoveWindow(save_format_combo_, x, y, kSaveFormatComboWidth, kComboBoxHeight, TRUE);
+    x += kSaveFormatComboWidth + kGap;
+
+    MoveWindow(save_directory_label_,
+               x,
+               y + (kButtonHeight - kHotkeyLabelHeight) / 2,
+               std::max(220, client_width - (x + kMargin)),
+               kHotkeyLabelHeight,
+               TRUE);
 
     y += kButtonHeight + kGap;
 
@@ -563,9 +865,29 @@ bool MainWindow::CaptureRegion() {
     image_ = std::move(selected_result->image);
     UpdateHotkeyLabels();
     UpdateActionState();
-    UpdateStatus(L"选区截图完成：" + std::to_wstring(image_.Width()) + L" x " +
-                 std::to_wstring(image_.Height()));
     InvalidateRect(window_, &preview_rect_, TRUE);
+
+    std::wstring save_error_message;
+    std::wstring saved_path;
+    bool clipboard_failed = false;
+    if (!SaveImageToConfiguredDirectory(image_, saved_path, save_error_message, clipboard_failed)) {
+        UpdateStatus(L"选区截图完成，但自动保存失败。");
+        MessageBoxW(window_, save_error_message.c_str(), L"保存失败", MB_OK | MB_ICONERROR);
+        return true;
+    }
+
+    if (clipboard_failed) {
+        UpdateStatus(L"选区截图已自动保存到：" + saved_path + L"，但复制到剪贴板失败。");
+        MessageBoxW(window_,
+                    save_error_message.c_str(),
+                    L"复制到剪贴板失败",
+                    MB_OK | MB_ICONWARNING);
+        return true;
+    }
+
+    UpdateStatus(std::wstring(L"选区截图已自动保存为 ") +
+                 FormatDisplayName(settings_.save_format) + L"，并复制到剪贴板：" + saved_path);
+
     return true;
 }
 
@@ -622,18 +944,22 @@ void MainWindow::SaveCapture() {
         return;
     }
 
-    std::wstring path;
-    if (!OpenSaveDialog(path)) {
-        return;
-    }
-
     std::wstring error_message;
-    if (!bitmap_writer_.WriteBmp(path, image_, error_message)) {
+    std::wstring saved_path;
+    bool clipboard_failed = false;
+    if (!SaveImageToConfiguredDirectory(image_, saved_path, error_message, clipboard_failed)) {
         MessageBoxW(window_, error_message.c_str(), L"保存失败", MB_OK | MB_ICONERROR);
         return;
     }
 
-    UpdateStatus(L"已保存到：" + path);
+    if (clipboard_failed) {
+        UpdateStatus(L"已保存到：" + saved_path + L"，但复制到剪贴板失败。");
+        MessageBoxW(window_, error_message.c_str(), L"复制到剪贴板失败", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    UpdateStatus(std::wstring(L"已保存为 ") + FormatDisplayName(settings_.save_format) +
+                 L"，并复制到剪贴板：" + saved_path);
 }
 
 void MainWindow::ClearCapture() {
@@ -881,35 +1207,6 @@ void MainWindow::HandleTrayCommand(TrayMenuCommand command) {
     }
 }
 
-bool MainWindow::OpenSaveDialog(std::wstring& selected_path) const {
-    wchar_t file_buffer[MAX_PATH] = L"capture.bmp";
-
-    OPENFILENAMEW dialog{};
-    dialog.lStructSize = sizeof(dialog);
-    dialog.hwndOwner = window_;
-    dialog.lpstrFile = file_buffer;
-    dialog.nMaxFile = MAX_PATH;
-    dialog.lpstrFilter = L"BMP 文件 (*.bmp)\0*.bmp\0所有文件 (*.*)\0*.*\0";
-    dialog.nFilterIndex = 1;
-    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    dialog.lpstrDefExt = L"bmp";
-
-    if (GetSaveFileNameW(&dialog) == TRUE) {
-        selected_path = file_buffer;
-        return true;
-    }
-
-    const DWORD dialog_error = CommDlgExtendedError();
-    if (dialog_error != 0) {
-        MessageBoxW(window_,
-                    (L"打开保存对话框失败。\n\n错误码：" + std::to_wstring(dialog_error)).c_str(),
-                    L"对话框错误",
-                    MB_OK | MB_ICONERROR);
-    }
-
-    return false;
-}
-
 void MainWindow::DrawPreview(HDC hdc, const RECT& bounds) const {
     RECT content = bounds;
     InflateRect(&content, -1, -1);
@@ -1023,6 +1320,11 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         break;
 
     case WM_COMMAND:
+        if (LOWORD(w_param) == kSaveFormatComboId && HIWORD(w_param) == CBN_SELCHANGE) {
+            ApplySaveFormatSelection();
+            return 0;
+        }
+
         switch (LOWORD(w_param)) {
         case kFullCaptureButtonId:
             CaptureDesktop();
@@ -1033,6 +1335,26 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         case kWindowCaptureButtonId:
             CaptureWindow();
             return 0;
+        case kSaveDirectoryButtonId: {
+            std::wstring selected_directory;
+            if (!ChooseSaveDirectory(selected_directory)) {
+                return 0;
+            }
+
+            const std::wstring previous_directory = settings_.save_directory;
+            settings_.save_directory = selected_directory;
+
+            std::wstring error_message;
+            if (!settings_repository_.Save(settings_, error_message)) {
+                settings_.save_directory = previous_directory;
+                MessageBoxW(window_, error_message.c_str(), L"保存设置失败", MB_OK | MB_ICONWARNING);
+                return 0;
+            }
+
+            UpdateSaveSettingsDisplay();
+            UpdateStatus(L"保存目录已更新为：" + settings_.save_directory);
+            return 0;
+        }
         case kSaveButtonId:
             SaveCapture();
             return 0;

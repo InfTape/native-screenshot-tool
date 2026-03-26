@@ -6,7 +6,7 @@
 #include <optional>
 #include <string>
 
-#include "capture/BitmapFileWriter.h"
+#include "capture/AutoSaveService.h"
 #include "capture/CapturedImage.h"
 #include "capture/DesktopSnapshot.h"
 #include "capture/ScreenCaptureService.h"
@@ -66,7 +66,16 @@ private:
     void ExitApplication();
     void HandleTrayCommand(TrayMenuCommand command);
     std::optional<capture::DesktopSnapshot> CaptureSnapshot(std::wstring& error_message) const;
-    bool OpenSaveDialog(std::wstring& selected_path) const;
+    bool SaveImageToConfiguredDirectory(const capture::CapturedImage& image,
+                                        std::wstring& saved_path,
+                                        std::wstring& error_message,
+                                        bool& clipboard_failed) const;
+    void UpdateSaveSettingsDisplay() const;
+    void UpdateSaveButtonLabel() const;
+    bool EnsureSaveDirectoryConfigured();
+    bool ResolveDefaultSaveDirectory(std::wstring& directory, std::wstring& error_message) const;
+    bool ChooseSaveDirectory(std::wstring& selected_directory) const;
+    void ApplySaveFormatSelection();
     void DrawPreview(HDC hdc, const RECT& bounds) const;
     void DrawEmptyState(HDC hdc, const RECT& bounds) const;
     LRESULT HandleMessage(UINT message, WPARAM w_param, LPARAM l_param);
@@ -76,6 +85,9 @@ private:
     HWND full_capture_button_ = nullptr;
     HWND region_capture_button_ = nullptr;
     HWND window_capture_button_ = nullptr;
+    HWND save_directory_button_ = nullptr;
+    HWND save_directory_label_ = nullptr;
+    HWND save_format_combo_ = nullptr;
     HWND save_button_ = nullptr;
     HWND clear_button_ = nullptr;
     HWND status_label_ = nullptr;
@@ -92,7 +104,7 @@ private:
     capture::CapturedImage image_;
     capture::ScreenCaptureService capture_service_;
     capture::WindowCaptureService window_capture_service_;
-    capture::BitmapFileWriter bitmap_writer_;
+    capture::AutoSaveService auto_save_service_;
     settings::AppSettings settings_;
     settings::SettingsRepository settings_repository_;
     hotkey::HotkeyManager hotkey_manager_;
