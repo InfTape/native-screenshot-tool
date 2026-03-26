@@ -70,6 +70,7 @@ private:
     RECT CurrentSelection() const;
     bool HasSelection() const;
     RECT CurrentPreviewRect() const;
+    RECT PreviewVisualRect(const RECT& preview_rect) const;
     bool HasPreviewRect() const;
     SelectionAdjustHandle HitTestSelectionHandle(const POINT& point) const;
     RECT SelectionHandleRect(const RECT& selection, SelectionAdjustHandle handle) const;

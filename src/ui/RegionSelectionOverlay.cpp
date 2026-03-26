@@ -28,6 +28,7 @@ constexpr std::size_t kMaxUndoSteps = 20;
 constexpr int kSelectionHandleSize = 8;
 constexpr int kSelectionHandleHitPadding = 6;
 constexpr int kMinimumSelectionSize = 8;
+constexpr int kPreviewInvalidationPadding = 4;
 
 void FillSolidRect(HDC hdc, const RECT& rect, COLORREF color) {
     if (!common::HasArea(rect)) {
@@ -500,6 +501,16 @@ RECT RegionSelectionOverlay::CurrentPreviewRect() const {
     return clipped;
 }
 
+RECT RegionSelectionOverlay::PreviewVisualRect(const RECT& preview_rect) const {
+    if (!common::HasArea(preview_rect)) {
+        return RECT{};
+    }
+
+    RECT visual_rect = preview_rect;
+    InflateRect(&visual_rect, kPreviewInvalidationPadding, kPreviewInvalidationPadding);
+    return common::ClampRectToBounds(visual_rect, back_buffer_size_.cx, back_buffer_size_.cy);
+}
+
 bool RegionSelectionOverlay::HasPreviewRect() const {
     return common::HasArea(CurrentPreviewRect());
 }
@@ -800,6 +811,14 @@ void RegionSelectionOverlay::FlushPendingDirtyRegion() {
         return;
     }
 
+    const bool use_region_bounds =
+        interaction_mode_ == InteractionMode::Mosaic || interaction_mode_ == InteractionMode::Arrow;
+    if (use_region_bounds) {
+        UpdateBackBuffer(region_bounds);
+        SetRectRgn(pending_dirty_region_, 0, 0, 0, 0);
+        return;
+    }
+
     const RECT* dirty_rects = reinterpret_cast<const RECT*>(region_data->Buffer);
     for (DWORD index = 0; index < region_data->rdh.nCount; ++index) {
         UpdateBackBuffer(dirty_rects[index]);
@@ -894,16 +913,21 @@ void RegionSelectionOverlay::InvalidateSelectionChange(const RECT& previous_sele
 
 void RegionSelectionOverlay::InvalidatePreviewChange(const RECT& previous_preview,
                                                      bool previous_has_preview) {
+    RECT previous_visual_preview = previous_preview;
+    if (previous_has_preview) {
+        previous_visual_preview = PreviewVisualRect(previous_preview);
+    }
+
     RECT current_preview{};
     bool current_has_preview = false;
 
     switch (interaction_mode_) {
     case InteractionMode::Mosaic:
-        current_preview = CurrentPreviewRect();
+        current_preview = PreviewVisualRect(CurrentPreviewRect());
         current_has_preview = common::HasArea(current_preview);
         break;
     case InteractionMode::Arrow:
-        current_preview = ArrowPreviewRect();
+        current_preview = PreviewVisualRect(ArrowPreviewRect());
         current_has_preview = common::HasArea(current_preview);
         break;
     default:
@@ -911,7 +935,10 @@ void RegionSelectionOverlay::InvalidatePreviewChange(const RECT& previous_previe
     }
 
     const RECT dirty_rect =
-        UnionIfNeeded(previous_preview, previous_has_preview, current_preview, current_has_preview);
+        UnionIfNeeded(previous_visual_preview,
+                      previous_has_preview,
+                      current_preview,
+                      current_has_preview);
     RefreshDirtyRect(dirty_rect);
 }
 
@@ -1170,7 +1197,7 @@ void RegionSelectionOverlay::DrawMosaicPreview(HDC hdc) const {
         return;
     }
 
-    HPEN border_pen = CreatePen(PS_DOT, 2, kPreviewAccentColor);
+    HPEN border_pen = CreatePen(PS_SOLID, 2, kPreviewAccentColor);
     const HGDIOBJ previous_pen = SelectObject(hdc, border_pen);
     const HGDIOBJ previous_brush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
     Rectangle(hdc, preview_rect.left, preview_rect.top, preview_rect.right, preview_rect.bottom);
