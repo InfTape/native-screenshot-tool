@@ -9,6 +9,7 @@ namespace ui {
 enum class SelectionToolbarAction {
     None,
     Select,
+    Rectangle,
     Mosaic,
     Arrow,
     Undo,
@@ -33,7 +34,7 @@ private:
         const wchar_t* label = L"";
     };
 
-    static constexpr int kButtonCount = 6;
+    static constexpr int kButtonCount = 7;
 
     std::array<Button, kButtonCount> buttons_{};
     RECT bounds_{};

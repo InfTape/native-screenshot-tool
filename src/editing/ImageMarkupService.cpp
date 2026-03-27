@@ -218,4 +218,43 @@ bool ImageMarkupService::DrawArrow(capture::CapturedImage& image,
     return true;
 }
 
+bool ImageMarkupService::DrawRectangle(capture::CapturedImage& image,
+                                       const RECT& clip_bounds,
+                                       const RECT& rect,
+                                       COLORREF color,
+                                       int thickness,
+                                       std::wstring& error_message) {
+    if (image.IsEmpty()) {
+        error_message = L"当前没有可编辑的图像。";
+        return false;
+    }
+
+    const RECT clamped_clip = ClampToImage(image, clip_bounds);
+    if (!common::HasArea(clamped_clip)) {
+        error_message = L"矩形绘制区域无效。";
+        return false;
+    }
+
+    const RECT normalized_rect =
+        common::NormalizeRect(POINT{rect.left, rect.top}, POINT{rect.right, rect.bottom});
+    RECT outline_rect{};
+    IntersectRect(&outline_rect, &normalized_rect, &clamped_clip);
+    if (!common::HasArea(outline_rect)) {
+        error_message = L"矩形区域无效。";
+        return false;
+    }
+
+    const int stroke_thickness = std::max(2, thickness);
+    const POINT top_left{outline_rect.left, outline_rect.top};
+    const POINT top_right{outline_rect.right - 1, outline_rect.top};
+    const POINT bottom_left{outline_rect.left, outline_rect.bottom - 1};
+    const POINT bottom_right{outline_rect.right - 1, outline_rect.bottom - 1};
+
+    DrawStrokeLine(image, top_left, top_right, stroke_thickness, color, clamped_clip);
+    DrawStrokeLine(image, top_right, bottom_right, stroke_thickness, color, clamped_clip);
+    DrawStrokeLine(image, bottom_right, bottom_left, stroke_thickness, color, clamped_clip);
+    DrawStrokeLine(image, bottom_left, top_left, stroke_thickness, color, clamped_clip);
+    return true;
+}
+
 }  // namespace editing

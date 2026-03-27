@@ -21,6 +21,8 @@ constexpr COLORREF kPanelColor = RGB(24, 24, 24);
 constexpr COLORREF kPanelBorderColor = RGB(255, 255, 255);
 constexpr COLORREF kPanelTextColor = RGB(255, 255, 255);
 constexpr COLORREF kPreviewAccentColor = RGB(242, 154, 28);
+constexpr COLORREF kRectangleColor = RGB(255, 48, 48);
+constexpr int kRectangleThickness = 4;
 constexpr COLORREF kArrowColor = RGB(255, 99, 71);
 constexpr int kArrowThickness = 4;
 constexpr int kMosaicBlockSize = 14;
@@ -145,6 +147,22 @@ void DrawArrowShape(HDC hdc, const POINT& start, const POINT& end, COLORREF colo
     LineTo(hdc, left.x, left.y);
     MoveToEx(hdc, end.x, end.y, nullptr);
     LineTo(hdc, right.x, right.y);
+
+    SelectObject(hdc, previous_brush);
+    SelectObject(hdc, previous_pen);
+    DeleteObject(pen);
+}
+
+void DrawRectangleShape(HDC hdc, const RECT& rect, COLORREF color, int thickness) {
+    if (!common::HasArea(rect)) {
+        return;
+    }
+
+    HPEN pen = CreatePen(PS_SOLID, thickness, color);
+    const HGDIOBJ previous_pen = SelectObject(hdc, pen);
+    const HGDIOBJ previous_brush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+
+    Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
 
     SelectObject(hdc, previous_brush);
     SelectObject(hdc, previous_pen);
@@ -520,7 +538,8 @@ bool RegionSelectionOverlay::HasSelection() const {
 }
 
 RECT RegionSelectionOverlay::CurrentPreviewRect() const {
-    if (interaction_mode_ != InteractionMode::Mosaic) {
+    if (interaction_mode_ != InteractionMode::Mosaic &&
+        interaction_mode_ != InteractionMode::Rectangle) {
         return RECT{};
     }
 
@@ -840,8 +859,9 @@ void RegionSelectionOverlay::FlushPendingDirtyRegion() {
         return;
     }
 
-    const bool use_region_bounds =
-        interaction_mode_ == InteractionMode::Mosaic || interaction_mode_ == InteractionMode::Arrow;
+    const bool use_region_bounds = interaction_mode_ == InteractionMode::Rectangle ||
+                                   interaction_mode_ == InteractionMode::Mosaic ||
+                                   interaction_mode_ == InteractionMode::Arrow;
     if (use_region_bounds) {
         UpdateBackBuffer(region_bounds);
         SetRectRgn(pending_dirty_region_, 0, 0, 0, 0);
@@ -951,6 +971,10 @@ void RegionSelectionOverlay::InvalidatePreviewChange(const RECT& previous_previe
     bool current_has_preview = false;
 
     switch (interaction_mode_) {
+    case InteractionMode::Rectangle:
+        current_preview = PreviewVisualRect(CurrentPreviewRect());
+        current_has_preview = common::HasArea(current_preview);
+        break;
     case InteractionMode::Mosaic:
         current_preview = PreviewVisualRect(CurrentPreviewRect());
         current_has_preview = common::HasArea(current_preview);
@@ -993,6 +1017,8 @@ SelectionToolbarAction RegionSelectionOverlay::ActiveToolbarAction() const {
     switch (active_tool_) {
     case EditTool::Select:
         return SelectionToolbarAction::Select;
+    case EditTool::Rectangle:
+        return SelectionToolbarAction::Rectangle;
     case EditTool::Mosaic:
         return SelectionToolbarAction::Mosaic;
     case EditTool::Arrow:
@@ -1023,6 +1049,29 @@ void RegionSelectionOverlay::UndoLastEdit() {
     edit_history_.pop_back();
     RebuildSourceBuffers();
     RefreshFullFrame();
+}
+
+bool RegionSelectionOverlay::ApplyPendingRectangle(std::wstring& error_message) {
+    const RECT rectangle_rect = CurrentPreviewRect();
+    if (!common::HasArea(rectangle_rect)) {
+        return true;
+    }
+
+    PushUndoState();
+    if (!editing::ImageMarkupService::DrawRectangle(working_image_,
+                                                    selection_,
+                                                    rectangle_rect,
+                                                    kRectangleColor,
+                                                    kRectangleThickness,
+                                                    error_message)) {
+        if (!edit_history_.empty()) {
+            edit_history_.pop_back();
+        }
+        return false;
+    }
+
+    RebuildSourceBuffers();
+    return true;
 }
 
 bool RegionSelectionOverlay::ApplyPendingMosaic(std::wstring& error_message) {
@@ -1098,7 +1147,9 @@ void RegionSelectionOverlay::PaintOverlay(HDC hdc, const RECT& client_rect) cons
         DrawSelectionLabel(hdc, selection, client_rect);
     }
 
-    if (interaction_mode_ == InteractionMode::Mosaic) {
+    if (interaction_mode_ == InteractionMode::Rectangle) {
+        DrawRectanglePreview(hdc);
+    } else if (interaction_mode_ == InteractionMode::Mosaic) {
         DrawMosaicPreview(hdc);
     } else if (interaction_mode_ == InteractionMode::Arrow) {
         DrawArrowPreview(hdc);
@@ -1231,6 +1282,15 @@ void RegionSelectionOverlay::DrawSelectionLabel(HDC hdc,
     DrawTextW(hdc, size_text.c_str(), -1, &text_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
+void RegionSelectionOverlay::DrawRectanglePreview(HDC hdc) const {
+    const RECT preview_rect = CurrentPreviewRect();
+    if (!common::HasArea(preview_rect)) {
+        return;
+    }
+
+    DrawRectangleShape(hdc, preview_rect, kRectangleColor, kRectangleThickness);
+}
+
 void RegionSelectionOverlay::DrawMosaicPreview(HDC hdc) const {
     const RECT preview_rect = CurrentPreviewRect();
     if (!common::HasArea(preview_rect)) {
@@ -1354,6 +1414,9 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
             case SelectionToolbarAction::Select:
                 SetActiveTool(EditTool::Select);
                 return 0;
+            case SelectionToolbarAction::Rectangle:
+                SetActiveTool(EditTool::Rectangle);
+                return 0;
             case SelectionToolbarAction::Mosaic:
                 SetActiveTool(EditTool::Mosaic);
                 return 0;
@@ -1412,8 +1475,21 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
 
         preview_start_ = point;
         preview_current_ = point;
-        interaction_mode_ =
-            active_tool_ == EditTool::Mosaic ? InteractionMode::Mosaic : InteractionMode::Arrow;
+        switch (active_tool_) {
+        case EditTool::Rectangle:
+            interaction_mode_ = InteractionMode::Rectangle;
+            break;
+        case EditTool::Mosaic:
+            interaction_mode_ = InteractionMode::Mosaic;
+            break;
+        case EditTool::Arrow:
+            interaction_mode_ = InteractionMode::Arrow;
+            break;
+        case EditTool::Select:
+        default:
+            interaction_mode_ = InteractionMode::None;
+            break;
+        }
         SetCapture(window_);
         return 0;
     }
@@ -1441,11 +1517,12 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
                                       true,
                                       previous_toolbar_rect,
                                       previous_toolbar_visible);
-        } else if (interaction_mode_ == InteractionMode::Mosaic ||
+        } else if (interaction_mode_ == InteractionMode::Rectangle ||
+                   interaction_mode_ == InteractionMode::Mosaic ||
                    interaction_mode_ == InteractionMode::Arrow) {
-            const RECT previous_preview = interaction_mode_ == InteractionMode::Mosaic
-                                              ? CurrentPreviewRect()
-                                              : ArrowPreviewRect();
+            const RECT previous_preview =
+                interaction_mode_ == InteractionMode::Arrow ? ArrowPreviewRect()
+                                                            : CurrentPreviewRect();
             const bool previous_has_preview = common::HasArea(previous_preview);
             preview_current_.x = GET_X_LPARAM(l_param);
             preview_current_.y = GET_Y_LPARAM(l_param);
@@ -1484,16 +1561,21 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
             return 0;
         }
 
-        if (interaction_mode_ == InteractionMode::Mosaic || interaction_mode_ == InteractionMode::Arrow) {
+        if (interaction_mode_ == InteractionMode::Rectangle ||
+            interaction_mode_ == InteractionMode::Mosaic ||
+            interaction_mode_ == InteractionMode::Arrow) {
             preview_current_.x = GET_X_LPARAM(l_param);
             preview_current_.y = GET_Y_LPARAM(l_param);
             const RECT previous_preview =
-                interaction_mode_ == InteractionMode::Mosaic ? CurrentPreviewRect() : ArrowPreviewRect();
+                interaction_mode_ == InteractionMode::Arrow ? ArrowPreviewRect()
+                                                            : CurrentPreviewRect();
             const bool previous_has_preview = common::HasArea(previous_preview);
 
             std::wstring error_message;
             bool applied = true;
-            if (interaction_mode_ == InteractionMode::Mosaic) {
+            if (interaction_mode_ == InteractionMode::Rectangle) {
+                applied = ApplyPendingRectangle(error_message);
+            } else if (interaction_mode_ == InteractionMode::Mosaic) {
                 applied = ApplyPendingMosaic(error_message);
             } else {
                 applied = ApplyPendingArrow(error_message);

@@ -22,6 +22,13 @@ public:
                           COLORREF color,
                           int thickness,
                           std::wstring& error_message);
+
+    static bool DrawRectangle(capture::CapturedImage& image,
+                              const RECT& clip_bounds,
+                              const RECT& rect,
+                              COLORREF color,
+                              int thickness,
+                              std::wstring& error_message);
 };
 
 }  // namespace editing

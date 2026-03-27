@@ -21,7 +21,8 @@ RECT CreateRect(int left, int top, int width, int height) {
 }
 
 bool PointInRectInclusive(const RECT& rect, const POINT& point) {
-    return point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom;
+    return point.x >= rect.left && point.x < rect.right && point.y >= rect.top &&
+           point.y < rect.bottom;
 }
 
 bool IsButtonEnabled(ui::SelectionToolbarAction action, bool can_undo) {
@@ -34,7 +35,8 @@ namespace ui {
 
 void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& client_bounds) {
     const int toolbar_width =
-        (kButtonCount * kButtonWidth) + ((kButtonCount - 1) * kButtonSpacing) + (kToolbarPadding * 2);
+        (kButtonCount * kButtonWidth) + ((kButtonCount - 1) * kButtonSpacing) +
+        (kToolbarPadding * 2);
     const int toolbar_height = kButtonHeight + (kToolbarPadding * 2);
 
     int left = selection.left + ((selection.right - selection.left - toolbar_width) / 2);
@@ -56,6 +58,7 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
 
     static constexpr SelectionToolbarAction kActions[kButtonCount] = {
         SelectionToolbarAction::Select,
+        SelectionToolbarAction::Rectangle,
         SelectionToolbarAction::Mosaic,
         SelectionToolbarAction::Arrow,
         SelectionToolbarAction::Undo,
@@ -63,12 +66,13 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
         SelectionToolbarAction::Cancel,
     };
     static constexpr const wchar_t* kLabels[kButtonCount] = {
-        L"框选",
-        L"马赛克",
-        L"箭头",
-        L"撤销",
-        L"完成",
-        L"取消",
+        L"\u9009\u62e9",
+        L"\u77e9\u5f62",
+        L"\u9a6c\u8d5b\u514b",
+        L"\u7bad\u5934",
+        L"\u64a4\u9500",
+        L"\u5b8c\u6210",
+        L"\u53d6\u6d88",
     };
 
     int button_left = bounds_.left + kToolbarPadding;

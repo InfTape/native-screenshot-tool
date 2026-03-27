@@ -29,6 +29,7 @@ public:
 private:
     enum class EditTool {
         Select,
+        Rectangle,
         Mosaic,
         Arrow,
     };
@@ -37,6 +38,7 @@ private:
         None,
         Selecting,
         Adjusting,
+        Rectangle,
         Mosaic,
         Arrow,
     };
@@ -106,6 +108,7 @@ private:
     bool CanUndoLastEdit() const;
     void PushUndoState();
     void UndoLastEdit();
+    bool ApplyPendingRectangle(std::wstring& error_message);
     bool ApplyPendingMosaic(std::wstring& error_message);
     bool ApplyPendingArrow(std::wstring& error_message);
     void ShowEditError(const std::wstring& error_message) const;
@@ -117,6 +120,7 @@ private:
     void DrawSelectionBorder(HDC hdc, const RECT& selection) const;
     void DrawSelectionHandles(HDC hdc, const RECT& selection) const;
     void DrawSelectionLabel(HDC hdc, const RECT& selection, const RECT& client_rect) const;
+    void DrawRectanglePreview(HDC hdc) const;
     void DrawMosaicPreview(HDC hdc) const;
     void DrawArrowPreview(HDC hdc) const;
     LRESULT HandleMessage(UINT message, WPARAM w_param, LPARAM l_param);
