@@ -23,6 +23,7 @@ constexpr int kSaveDirectoryButtonId = 1004;
 constexpr int kSaveFormatComboId = 1005;
 constexpr int kSaveButtonId = 1006;
 constexpr int kClearButtonId = 1007;
+constexpr int kLaunchAtStartupCheckboxId = 1008;
 constexpr int kFullHotkeyButtonId = 1011;
 constexpr int kRegionHotkeyButtonId = 1012;
 constexpr int kWindowHotkeyButtonId = 1013;
@@ -46,6 +47,10 @@ constexpr int kGap = 10;
 constexpr int kStatusHeight = 24;
 constexpr int kHotkeyLabelHeight = 24;
 constexpr int kSaveFormatComboWidth = 110;
+constexpr int kStartupOptionMinWidth = 320;
+constexpr wchar_t kStartupRegistryPath[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kStartupValueName[] = L"NativeScreenshot";
+constexpr wchar_t kStartupLaunchArgument[] = L"--startup";
 
 struct ScopedBooleanReset {
     explicit ScopedBooleanReset(bool& value) : value_(value) {
@@ -218,6 +223,39 @@ capture::ImageFileFormat SaveFormatFromComboIndex(int combo_index) {
     return combo_index == 1 ? capture::ImageFileFormat::Bmp : capture::ImageFileFormat::Png;
 }
 
+struct ScopedRegistryKey {
+    ~ScopedRegistryKey() {
+        if (key != nullptr) {
+            RegCloseKey(key);
+        }
+    }
+
+    HKEY key = nullptr;
+};
+
+std::optional<std::wstring> ResolveExecutablePath(std::wstring& error_message) {
+    std::vector<wchar_t> buffer(MAX_PATH);
+    for (;;) {
+        const DWORD copied =
+            GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (copied == 0) {
+            error_message = L"获取程序路径失败。\n\n" +
+                            common::GetLastErrorMessage(GetLastError());
+            return std::nullopt;
+        }
+
+        if (copied < buffer.size() - 1) {
+            return std::wstring(buffer.data(), copied);
+        }
+
+        buffer.resize(buffer.size() * 2);
+    }
+}
+
+std::wstring BuildStartupCommandLine(const std::wstring& executable_path) {
+    return L"\"" + executable_path + L"\" " + kStartupLaunchArgument;
+}
+
 }  // namespace
 
 namespace ui {
@@ -262,7 +300,12 @@ bool MainWindow::Create() {
     return window_ != nullptr;
 }
 
-void MainWindow::Show(int nCmdShow) const {
+void MainWindow::Show(int nCmdShow, bool start_hidden_to_tray) {
+    if (start_hidden_to_tray && tray_icon_controller_.IsInstalled()) {
+        HideToTray(false);
+        return;
+    }
+
     ShowWindow(window_, nCmdShow);
     UpdateWindow(window_);
 }
@@ -369,6 +412,20 @@ bool MainWindow::CreateChildControls() {
                                          instance_,
                                          nullptr);
 
+    launch_at_startup_checkbox_ = CreateWindowExW(
+        0,
+        L"BUTTON",
+        L"开机启动（系统启动后默认收至托盘）",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+        0,
+        0,
+        0,
+        0,
+        window_,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLaunchAtStartupCheckboxId)),
+        instance_,
+        nullptr);
+
     save_button_ = CreateWindowExW(0,
                                    L"BUTTON",
                                    L"立即保存",
@@ -443,6 +500,7 @@ bool MainWindow::CreateChildControls() {
     if (full_capture_button_ == nullptr || region_capture_button_ == nullptr ||
         window_capture_button_ == nullptr || save_directory_button_ == nullptr ||
         save_directory_label_ == nullptr || save_format_combo_ == nullptr ||
+        launch_at_startup_checkbox_ == nullptr ||
         save_button_ == nullptr || clear_button_ == nullptr || status_label_ == nullptr) {
         return false;
     }
@@ -478,7 +536,16 @@ bool MainWindow::InitializeHotkeySettings() {
 
     EnsureSaveDirectoryConfigured();
     UpdateSaveSettingsDisplay();
+    UpdateStartupOptionDisplay();
     UpdateSaveButtonLabel();
+
+    std::wstring startup_error_message;
+    if (!SyncLaunchAtStartupSetting(settings_.launch_at_startup, startup_error_message)) {
+        MessageBoxW(window_,
+                    startup_error_message.c_str(),
+                    L"同步开机启动失败",
+                    MB_OK | MB_ICONWARNING);
+    }
 
     if (!RegisterConfiguredHotkeys(true)) {
         UpdateStatus(L"部分快捷键注册失败，请重新设置未被占用的组合键。");
@@ -541,6 +608,15 @@ void MainWindow::UpdateSaveSettingsDisplay() const {
     if (save_format_combo_ != nullptr) {
         SendMessageW(
             save_format_combo_, CB_SETCURSEL, SaveFormatComboIndex(settings_.save_format), 0);
+    }
+}
+
+void MainWindow::UpdateStartupOptionDisplay() const {
+    if (launch_at_startup_checkbox_ != nullptr) {
+        SendMessageW(launch_at_startup_checkbox_,
+                     BM_SETCHECK,
+                     settings_.launch_at_startup ? BST_CHECKED : BST_UNCHECKED,
+                     0);
     }
 }
 
@@ -693,6 +769,113 @@ void MainWindow::ApplySaveFormatSelection() {
     UpdateStatus(std::wstring(L"默认保存格式已切换为 ") + FormatDisplayName(settings_.save_format) + L"。");
 }
 
+bool MainWindow::SyncLaunchAtStartupSetting(bool enabled, std::wstring& error_message) const {
+    error_message.clear();
+
+    if (enabled) {
+        const auto executable_path = ResolveExecutablePath(error_message);
+        if (!executable_path.has_value()) {
+            return false;
+        }
+
+        ScopedRegistryKey registry_key;
+        LONG result = RegCreateKeyExW(HKEY_CURRENT_USER,
+                                      kStartupRegistryPath,
+                                      0,
+                                      nullptr,
+                                      REG_OPTION_NON_VOLATILE,
+                                      KEY_SET_VALUE,
+                                      nullptr,
+                                      &registry_key.key,
+                                      nullptr);
+        if (result != ERROR_SUCCESS) {
+            error_message = L"写入开机启动注册表失败。\n\n" +
+                            common::GetLastErrorMessage(static_cast<DWORD>(result));
+            return false;
+        }
+
+        const std::wstring command_line = BuildStartupCommandLine(*executable_path);
+        result = RegSetValueExW(
+            registry_key.key,
+            kStartupValueName,
+            0,
+            REG_SZ,
+            reinterpret_cast<const BYTE*>(command_line.c_str()),
+            static_cast<DWORD>((command_line.size() + 1) * sizeof(wchar_t)));
+        if (result != ERROR_SUCCESS) {
+            error_message = L"写入开机启动注册表失败。\n\n" +
+                            common::GetLastErrorMessage(static_cast<DWORD>(result));
+            return false;
+        }
+
+        return true;
+    }
+
+    ScopedRegistryKey registry_key;
+    LONG result =
+        RegOpenKeyExW(HKEY_CURRENT_USER, kStartupRegistryPath, 0, KEY_SET_VALUE, &registry_key.key);
+    if (result == ERROR_FILE_NOT_FOUND) {
+        return true;
+    }
+
+    if (result != ERROR_SUCCESS) {
+        error_message = L"删除开机启动注册表失败。\n\n" +
+                        common::GetLastErrorMessage(static_cast<DWORD>(result));
+        return false;
+    }
+
+    result = RegDeleteValueW(registry_key.key, kStartupValueName);
+    if (result == ERROR_FILE_NOT_FOUND) {
+        return true;
+    }
+
+    if (result != ERROR_SUCCESS) {
+        error_message = L"删除开机启动注册表失败。\n\n" +
+                        common::GetLastErrorMessage(static_cast<DWORD>(result));
+        return false;
+    }
+
+    return true;
+}
+
+void MainWindow::ToggleLaunchAtStartup() {
+    if (launch_at_startup_checkbox_ == nullptr) {
+        return;
+    }
+
+    const bool new_enabled =
+        SendMessageW(launch_at_startup_checkbox_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    const bool previous_enabled = settings_.launch_at_startup;
+    if (new_enabled == previous_enabled) {
+        return;
+    }
+
+    std::wstring error_message;
+    if (!SyncLaunchAtStartupSetting(new_enabled, error_message)) {
+        UpdateStartupOptionDisplay();
+        MessageBoxW(window_, error_message.c_str(), L"更新开机启动失败", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    settings_.launch_at_startup = new_enabled;
+    if (!settings_repository_.Save(settings_, error_message)) {
+        settings_.launch_at_startup = previous_enabled;
+        UpdateStartupOptionDisplay();
+
+        std::wstring rollback_error_message;
+        if (!SyncLaunchAtStartupSetting(previous_enabled, rollback_error_message)) {
+            error_message += L"\n\n恢复注册表状态失败：\n" + rollback_error_message;
+        }
+
+        MessageBoxW(window_, error_message.c_str(), L"保存设置失败", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    UpdateStartupOptionDisplay();
+    UpdateStatus(new_enabled ? L"已开启开机启动，系统启动后会默认收至托盘。"
+                             : L"已关闭开机启动。");
+}
+
 void MainWindow::LayoutControls(int client_width, int client_height) {
     static_cast<void>(client_height);
     int y = kMargin;
@@ -726,6 +909,15 @@ void MainWindow::LayoutControls(int client_width, int client_height) {
                y + (kButtonHeight - kHotkeyLabelHeight) / 2,
                std::max(220, client_width - (x + kMargin)),
                kHotkeyLabelHeight,
+               TRUE);
+
+    y += kButtonHeight + kGap;
+
+    MoveWindow(launch_at_startup_checkbox_,
+               kMargin,
+               y,
+               std::max(kStartupOptionMinWidth, client_width - (kMargin * 2)),
+               kButtonHeight,
                TRUE);
 
     y += kButtonHeight + kGap;
@@ -1183,14 +1375,14 @@ bool MainWindow::TriggerCaptureByHotkey(int hotkey_identifier) {
     }
 }
 
-void MainWindow::HideToTray() {
+void MainWindow::HideToTray(bool show_hint) {
     if (hidden_to_tray_ || window_ == nullptr) {
         return;
     }
 
     hidden_to_tray_ = true;
     ShowWindow(window_, SW_HIDE);
-    if (!tray_hint_shown_) {
+    if (show_hint && !tray_hint_shown_) {
         tray_icon_controller_.ShowBalloon(L"原生 Win32 截图工具",
                                           L"程序已隐藏到托盘，双击托盘图标可恢复主窗口。");
         tray_hint_shown_ = true;
@@ -1334,6 +1526,12 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         case kClearButtonId:
             ClearCapture();
             return 0;
+        case kLaunchAtStartupCheckboxId:
+            if (HIWORD(w_param) == BN_CLICKED) {
+                ToggleLaunchAtStartup();
+                return 0;
+            }
+            break;
         case kFullHotkeyButtonId:
             BeginHotkeyRecording(HotkeySlot::FullCapture);
             return 0;

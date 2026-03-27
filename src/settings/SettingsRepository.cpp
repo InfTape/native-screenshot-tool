@@ -13,12 +13,14 @@ namespace {
 
 constexpr wchar_t kHotkeySection[] = L"hotkeys";
 constexpr wchar_t kCaptureSection[] = L"capture";
+constexpr wchar_t kStartupSection[] = L"startup";
 constexpr wchar_t kFullModifiersKey[] = L"full_capture_modifiers";
 constexpr wchar_t kFullVirtualKeyKey[] = L"full_capture_virtual_key";
 constexpr wchar_t kRegionModifiersKey[] = L"region_capture_modifiers";
 constexpr wchar_t kRegionVirtualKeyKey[] = L"region_capture_virtual_key";
 constexpr wchar_t kWindowModifiersKey[] = L"window_capture_modifiers";
 constexpr wchar_t kWindowVirtualKeyKey[] = L"window_capture_virtual_key";
+constexpr wchar_t kLaunchAtStartupKey[] = L"launch_at_startup";
 constexpr wchar_t kSaveDirectoryKey[] = L"save_directory";
 constexpr wchar_t kSaveFormatKey[] = L"save_format";
 
@@ -61,6 +63,14 @@ void LoadSaveDirectory(const std::wstring& path, settings::AppSettings& settings
     settings.save_directory = buffer;
 }
 
+void LoadLaunchAtStartup(const std::wstring& path, settings::AppSettings& settings) {
+    settings.launch_at_startup =
+        GetPrivateProfileIntW(kStartupSection,
+                              kLaunchAtStartupKey,
+                              settings.launch_at_startup ? 1 : 0,
+                              path.c_str()) != 0;
+}
+
 void LoadSaveFormat(const std::wstring& path, settings::AppSettings& settings) {
     wchar_t buffer[32]{};
     GetPrivateProfileStringW(
@@ -82,6 +92,13 @@ bool SaveCaptureSettings(const std::wstring& path, const settings::AppSettings& 
     return WritePrivateProfileStringW(
                kCaptureSection, kSaveDirectoryKey, settings.save_directory.c_str(), path.c_str()) != FALSE &&
            WritePrivateProfileStringW(kCaptureSection, kSaveFormatKey, format_value, path.c_str()) != FALSE;
+}
+
+bool SaveLaunchAtStartup(const std::wstring& path, const settings::AppSettings& settings) {
+    return WritePrivateProfileStringW(kStartupSection,
+                                      kLaunchAtStartupKey,
+                                      settings.launch_at_startup ? L"1" : L"0",
+                                      path.c_str()) != FALSE;
 }
 
 }  // namespace
@@ -130,6 +147,7 @@ bool SettingsRepository::Load(AppSettings& settings, std::wstring& error_message
                kWindowModifiersKey,
                kWindowVirtualKeyKey,
                settings.window_capture_hotkey);
+    LoadLaunchAtStartup(path_string, settings);
     LoadSaveDirectory(path_string, settings);
     LoadSaveFormat(path_string, settings);
 
@@ -162,6 +180,7 @@ bool SettingsRepository::Save(const AppSettings& settings, std::wstring& error_m
                     kWindowModifiersKey,
                     kWindowVirtualKeyKey,
                     settings.window_capture_hotkey) ||
+        !SaveLaunchAtStartup(path_string, settings) ||
         !SaveCaptureSettings(path_string, settings)) {
         error_message = L"写入设置文件失败。";
         return false;

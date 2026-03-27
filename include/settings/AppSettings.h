@@ -11,6 +11,7 @@ struct AppSettings {
     hotkey::HotkeyDefinition full_capture_hotkey = hotkey::GetDefaultFullCaptureHotkey();
     hotkey::HotkeyDefinition region_capture_hotkey = hotkey::GetDefaultRegionCaptureHotkey();
     hotkey::HotkeyDefinition window_capture_hotkey = hotkey::GetDefaultWindowCaptureHotkey();
+    bool launch_at_startup = true;
     std::wstring save_directory;
     capture::ImageFileFormat save_format = capture::ImageFileFormat::Png;
 };

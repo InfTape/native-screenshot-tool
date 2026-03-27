@@ -32,7 +32,7 @@ public:
     explicit MainWindow(HINSTANCE instance);
 
     bool Create();
-    void Show(int nCmdShow) const;
+    void Show(int nCmdShow, bool start_hidden_to_tray);
 
 private:
     static constexpr wchar_t kClassName[] = L"NativeScreenshot.MainWindow";
@@ -60,7 +60,7 @@ private:
                                    std::wstring* error_summary = nullptr);
     void UnregisterAllHotkeys();
     bool TriggerCaptureByHotkey(int hotkey_identifier);
-    void HideToTray();
+    void HideToTray(bool show_hint = true);
     void ShowFromTray();
     void ExitApplication();
     void HandleTrayCommand(TrayMenuCommand command);
@@ -70,11 +70,14 @@ private:
                                         std::wstring& error_message,
                                         bool& clipboard_failed) const;
     void UpdateSaveSettingsDisplay() const;
+    void UpdateStartupOptionDisplay() const;
     void UpdateSaveButtonLabel() const;
     bool EnsureSaveDirectoryConfigured();
     bool ResolveDefaultSaveDirectory(std::wstring& directory, std::wstring& error_message) const;
     bool ChooseSaveDirectory(std::wstring& selected_directory) const;
     void ApplySaveFormatSelection();
+    bool SyncLaunchAtStartupSetting(bool enabled, std::wstring& error_message) const;
+    void ToggleLaunchAtStartup();
     LRESULT HandleMessage(UINT message, WPARAM w_param, LPARAM l_param);
 
     HINSTANCE instance_ = nullptr;
@@ -85,6 +88,7 @@ private:
     HWND save_directory_button_ = nullptr;
     HWND save_directory_label_ = nullptr;
     HWND save_format_combo_ = nullptr;
+    HWND launch_at_startup_checkbox_ = nullptr;
     HWND save_button_ = nullptr;
     HWND clear_button_ = nullptr;
     HWND status_label_ = nullptr;
