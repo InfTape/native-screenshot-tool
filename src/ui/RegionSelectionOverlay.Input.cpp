@@ -321,7 +321,7 @@ void RegionSelectionOverlay::AppendBrushPoint(const POINT& point) {
         return;
     }
 
-    constexpr double kSmoothingAlpha = 0.3;
+    constexpr double kSmoothingAlpha = 0.2;
     session_.brush_smooth_x +=
         kSmoothingAlpha * (static_cast<double>(clamped_point.x) - session_.brush_smooth_x);
     session_.brush_smooth_y +=
