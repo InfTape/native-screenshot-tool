@@ -83,6 +83,22 @@ void DrawStrokeLine(capture::CapturedImage& image,
     }
 }
 
+void SetAlphaOpaque(capture::CapturedImage& image, const RECT& rect) {
+    const RECT clamped_rect = ClampToImage(image, rect);
+    if (!common::HasArea(clamped_rect)) {
+        return;
+    }
+
+    auto& pixels = image.Pixels();
+    for (int y = clamped_rect.top; y < clamped_rect.bottom; ++y) {
+        for (int x = clamped_rect.left; x < clamped_rect.right; ++x) {
+            const std::size_t offset =
+                (static_cast<std::size_t>(y) * image.RowStride()) + (static_cast<std::size_t>(x) * 4);
+            pixels[offset + 3] = 0xFF;
+        }
+    }
+}
+
 }  // namespace
 
 namespace editing {
@@ -245,15 +261,64 @@ bool ImageMarkupService::DrawRectangle(capture::CapturedImage& image,
     }
 
     const int stroke_thickness = std::max(2, thickness);
-    const POINT top_left{outline_rect.left, outline_rect.top};
-    const POINT top_right{outline_rect.right - 1, outline_rect.top};
-    const POINT bottom_left{outline_rect.left, outline_rect.bottom - 1};
-    const POINT bottom_right{outline_rect.right - 1, outline_rect.bottom - 1};
+    HDC memory_dc = CreateCompatibleDC(nullptr);
+    if (memory_dc == nullptr) {
+        error_message = L"创建矩形绘制缓冲失败。";
+        return false;
+    }
 
-    DrawStrokeLine(image, top_left, top_right, stroke_thickness, color, clamped_clip);
-    DrawStrokeLine(image, top_right, bottom_right, stroke_thickness, color, clamped_clip);
-    DrawStrokeLine(image, bottom_right, bottom_left, stroke_thickness, color, clamped_clip);
-    DrawStrokeLine(image, bottom_left, top_left, stroke_thickness, color, clamped_clip);
+    const BITMAPINFO bitmap_info = image.CreateBitmapInfo();
+    void* bitmap_bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(
+        memory_dc, &bitmap_info, DIB_RGB_COLORS, &bitmap_bits, nullptr, 0);
+    if (bitmap == nullptr || bitmap_bits == nullptr) {
+        if (bitmap != nullptr) {
+            DeleteObject(bitmap);
+        }
+        DeleteDC(memory_dc);
+        error_message = L"创建矩形绘制位图失败。";
+        return false;
+    }
+
+    const HGDIOBJ previous_bitmap = SelectObject(memory_dc, bitmap);
+    if (previous_bitmap == nullptr || previous_bitmap == HGDI_ERROR) {
+        DeleteObject(bitmap);
+        DeleteDC(memory_dc);
+        error_message = L"绑定矩形绘制位图失败。";
+        return false;
+    }
+
+    auto& pixels = image.Pixels();
+    std::copy(pixels.begin(), pixels.end(), static_cast<std::uint8_t*>(bitmap_bits));
+
+    HPEN pen = CreatePen(PS_SOLID, stroke_thickness, color);
+    if (pen == nullptr) {
+        SelectObject(memory_dc, previous_bitmap);
+        DeleteObject(bitmap);
+        DeleteDC(memory_dc);
+        error_message = L"创建矩形画笔失败。";
+        return false;
+    }
+
+    const HGDIOBJ previous_pen = SelectObject(memory_dc, pen);
+    const HGDIOBJ previous_brush = SelectObject(memory_dc, GetStockObject(HOLLOW_BRUSH));
+    Rectangle(memory_dc, outline_rect.left, outline_rect.top, outline_rect.right, outline_rect.bottom);
+
+    SelectObject(memory_dc, previous_brush);
+    SelectObject(memory_dc, previous_pen);
+    DeleteObject(pen);
+
+    std::copy(static_cast<const std::uint8_t*>(bitmap_bits),
+              static_cast<const std::uint8_t*>(bitmap_bits) + pixels.size(),
+              pixels.begin());
+
+    RECT dirty_rect = outline_rect;
+    InflateRect(&dirty_rect, stroke_thickness, stroke_thickness);
+    SetAlphaOpaque(image, dirty_rect);
+
+    SelectObject(memory_dc, previous_bitmap);
+    DeleteObject(bitmap);
+    DeleteDC(memory_dc);
     return true;
 }
 
