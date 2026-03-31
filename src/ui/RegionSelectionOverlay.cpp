@@ -4,10 +4,10 @@
 #include <WindowsX.h>
 
 #include <algorithm>
-#include <cmath>
 #include <string>
 #include <vector>
 
+#include "common/Direct2D.h"
 #include "common/RectUtils.h"
 #include "common/Win32Error.h"
 #include "editing/ImageMarkupService.h"
@@ -111,46 +111,11 @@ bool IsPointInside(const RECT& rect, const POINT& point) {
     return common::HasArea(rect) && PtInRect(&rect, point) != FALSE;
 }
 
-void DrawArrowShape(HDC hdc, const POINT& start, const POINT& end, COLORREF color, int thickness) {
-    const double dx = static_cast<double>(end.x - start.x);
-    const double dy = static_cast<double>(end.y - start.y);
-    const double length = std::hypot(dx, dy);
-    if (length < 1.0) {
-        return;
-    }
-
-    HPEN pen = CreatePen(PS_SOLID, thickness, color);
-    const HGDIOBJ previous_pen = SelectObject(hdc, pen);
-    const HGDIOBJ previous_brush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
-
-    MoveToEx(hdc, start.x, start.y, nullptr);
-    LineTo(hdc, end.x, end.y);
-
-    const double unit_x = dx / length;
-    const double unit_y = dy / length;
-    const double head_length = std::max(14.0, static_cast<double>(thickness) * 4.0);
-    const double cos_angle = std::cos(0.5235987755982988);
-    const double sin_angle = std::sin(0.5235987755982988);
-    const double back_x = -unit_x * head_length;
-    const double back_y = -unit_y * head_length;
-
-    const POINT left{
-        static_cast<LONG>(std::lround(end.x + (back_x * cos_angle) - (back_y * sin_angle))),
-        static_cast<LONG>(std::lround(end.y + (back_x * sin_angle) + (back_y * cos_angle))),
-    };
-    const POINT right{
-        static_cast<LONG>(std::lround(end.x + (back_x * cos_angle) + (back_y * sin_angle))),
-        static_cast<LONG>(std::lround(end.y - (back_x * sin_angle) + (back_y * cos_angle))),
-    };
-
-    MoveToEx(hdc, end.x, end.y, nullptr);
-    LineTo(hdc, left.x, left.y);
-    MoveToEx(hdc, end.x, end.y, nullptr);
-    LineTo(hdc, right.x, right.y);
-
-    SelectObject(hdc, previous_brush);
-    SelectObject(hdc, previous_pen);
-    DeleteObject(pen);
+POINT ClampPointToRect(const POINT& point, const RECT& rect) {
+    POINT clamped{};
+    clamped.x = std::clamp(point.x, rect.left, rect.right - 1);
+    clamped.y = std::clamp(point.y, rect.top, rect.bottom - 1);
+    return clamped;
 }
 
 void DrawRectangleShape(HDC hdc, const RECT& rect, COLORREF color, int thickness) {
@@ -1311,7 +1276,26 @@ void RegionSelectionOverlay::DrawArrowPreview(HDC hdc) const {
         return;
     }
 
-    DrawArrowShape(hdc, preview_start_, preview_current_, kArrowColor, kArrowThickness);
+    RECT client_rect{};
+    if (window_ != nullptr) {
+        GetClientRect(window_, &client_rect);
+    }
+
+    const RECT clip_rect = common::HasArea(selection_) ? selection_ : client_rect;
+    const POINT clamped_start = common::HasArea(clip_rect) ? ClampPointToRect(preview_start_, clip_rect)
+                                                           : preview_start_;
+    const POINT clamped_end = common::HasArea(clip_rect) ? ClampPointToRect(preview_current_, clip_rect)
+                                                         : preview_current_;
+
+    std::wstring error_message;
+    common::DrawArrowOnHdc(hdc,
+                           client_rect,
+                           common::HasArea(clip_rect) ? &clip_rect : nullptr,
+                           clamped_start,
+                           clamped_end,
+                           kArrowColor,
+                           static_cast<float>(kArrowThickness),
+                           error_message);
 }
 
 LRESULT CALLBACK RegionSelectionOverlay::WindowProc(HWND hwnd,

@@ -26,6 +26,7 @@ add_executable(NativeScreenshot WIN32
     src/capture/ImageClipboardWriter.cpp
     src/capture/ImageFileWriter.cpp
     src/settings/SettingsRepository.cpp
+    src/common/Direct2D.cpp
     src/common/DpiAwareness.cpp
     src/common/RectUtils.cpp
     src/common/Win32Error.cpp
@@ -51,6 +52,7 @@ add_executable(NativeScreenshot WIN32
     include/capture/ImageFileWriter.h
     include/settings/AppSettings.h
     include/settings/SettingsRepository.h
+    include/common/Direct2D.h
     include/common/DpiAwareness.h
     include/common/RectUtils.h
     include/common/Win32Error.h
@@ -74,6 +76,7 @@ endif()
 target_link_libraries(NativeScreenshot PRIVATE
     Comctl32
     Comdlg32
+    D2d1
     Dwmapi
     Gdi32
     Msimg32
