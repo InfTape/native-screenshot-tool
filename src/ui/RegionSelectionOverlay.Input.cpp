@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include "common/RectUtils.h"
 
@@ -321,11 +322,20 @@ void RegionSelectionOverlay::AppendBrushPoint(const POINT& point) {
         return;
     }
 
-    constexpr double kSmoothingAlpha = 0.2;
-    session_.brush_smooth_x +=
-        kSmoothingAlpha * (static_cast<double>(clamped_point.x) - session_.brush_smooth_x);
-    session_.brush_smooth_y +=
-        kSmoothingAlpha * (static_cast<double>(clamped_point.y) - session_.brush_smooth_y);
+    constexpr double kAlphaMin = 0.1;   // 慢速时：强平滑
+    constexpr double kAlphaMax = 0.6;   // 快速时：跟手
+    constexpr double kSpeedLow = 3.0;   // 低于此距离视为慢速
+    constexpr double kSpeedHigh = 20.0; // 高于此距离视为快速
+
+    const double raw_dx = static_cast<double>(clamped_point.x) - session_.brush_smooth_x;
+    const double raw_dy = static_cast<double>(clamped_point.y) - session_.brush_smooth_y;
+    const double distance = std::sqrt(raw_dx * raw_dx + raw_dy * raw_dy);
+
+    const double t = std::clamp((distance - kSpeedLow) / (kSpeedHigh - kSpeedLow), 0.0, 1.0);
+    const double alpha = kAlphaMin + t * (kAlphaMax - kAlphaMin);
+
+    session_.brush_smooth_x += alpha * raw_dx;
+    session_.brush_smooth_y += alpha * raw_dy;
 
     POINT smoothed_point{};
     smoothed_point.x = static_cast<LONG>(session_.brush_smooth_x + 0.5);
