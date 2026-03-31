@@ -313,11 +313,29 @@ void RegionSelectionOverlay::AppendBrushPoint(const POINT& point) {
     }
 
     const POINT clamped_point = ClampPointToRect(point, session_.selection);
-    if (!session_.brush_points.empty() && SamePoint(session_.brush_points.back(), clamped_point)) {
+
+    if (session_.brush_points.empty()) {
+        session_.brush_smooth_x = static_cast<double>(clamped_point.x);
+        session_.brush_smooth_y = static_cast<double>(clamped_point.y);
+        session_.brush_points.push_back(clamped_point);
         return;
     }
 
-    session_.brush_points.push_back(clamped_point);
+    constexpr double kSmoothingAlpha = 0.3;
+    session_.brush_smooth_x +=
+        kSmoothingAlpha * (static_cast<double>(clamped_point.x) - session_.brush_smooth_x);
+    session_.brush_smooth_y +=
+        kSmoothingAlpha * (static_cast<double>(clamped_point.y) - session_.brush_smooth_y);
+
+    POINT smoothed_point{};
+    smoothed_point.x = static_cast<LONG>(session_.brush_smooth_x + 0.5);
+    smoothed_point.y = static_cast<LONG>(session_.brush_smooth_y + 0.5);
+
+    if (SamePoint(session_.brush_points.back(), smoothed_point)) {
+        return;
+    }
+
+    session_.brush_points.push_back(smoothed_point);
 }
 
 }  // namespace ui

@@ -60,6 +60,8 @@ public:
     POINT preview_start{};
     POINT preview_current{};
     std::vector<POINT> brush_points;
+    double brush_smooth_x = 0.0;
+    double brush_smooth_y = 0.0;
 
 private:
     std::vector<capture::CapturedImage> edit_history_;
