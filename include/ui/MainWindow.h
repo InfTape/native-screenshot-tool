@@ -48,6 +48,8 @@ private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param);
 
     bool CreateChildControls();
+    void CreateUIFont();
+    void ApplyFontToAllControls();
     bool InitializeHotkeySettings();
     bool InitializeTrayIcon();
     void LayoutControls(int client_width, int client_height);
@@ -87,6 +89,7 @@ private:
 
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr;
+    HFONT ui_font_ = nullptr;
     HWND full_capture_button_ = nullptr;
     HWND region_capture_button_ = nullptr;
     HWND window_capture_button_ = nullptr;

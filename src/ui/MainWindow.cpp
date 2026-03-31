@@ -524,7 +524,52 @@ bool MainWindow::CreateChildControls() {
     LayoutControls(client_rect.right - client_rect.left, client_rect.bottom - client_rect.top);
     UpdateActionState();
     UpdateHotkeyLabels();
+
+    CreateUIFont();
+    ApplyFontToAllControls();
+
     return true;
+}
+
+void MainWindow::CreateUIFont() {
+    NONCLIENTMETRICSW metrics{};
+    metrics.cbSize = sizeof(metrics);
+    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0)) {
+        ui_font_ = CreateFontIndirectW(&metrics.lfMessageFont);
+    }
+    if (ui_font_ == nullptr) {
+        ui_font_ = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    }
+}
+
+void MainWindow::ApplyFontToAllControls() {
+    if (ui_font_ == nullptr) {
+        return;
+    }
+
+    auto apply = [this](HWND hwnd) {
+        if (hwnd != nullptr) {
+            SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(ui_font_), TRUE);
+        }
+    };
+
+    apply(full_capture_button_);
+    apply(region_capture_button_);
+    apply(window_capture_button_);
+    apply(save_directory_button_);
+    apply(save_directory_label_);
+    apply(save_format_combo_);
+    apply(launch_at_startup_checkbox_);
+    apply(save_button_);
+    apply(clear_button_);
+    apply(status_label_);
+
+    for (HWND button : hotkey_buttons_) {
+        apply(button);
+    }
+    for (HWND label : hotkey_labels_) {
+        apply(label);
+    }
 }
 
 bool MainWindow::InitializeHotkeySettings() {
@@ -1540,6 +1585,10 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
     }
 
     case WM_DESTROY:
+        if (ui_font_ != nullptr) {
+            DeleteObject(ui_font_);
+            ui_font_ = nullptr;
+        }
         tray_icon_controller_.RemoveIcon();
         UnregisterAllHotkeys();
         PostQuitMessage(0);
