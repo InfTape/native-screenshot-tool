@@ -10,9 +10,10 @@ namespace {
 
 constexpr int kInstructionHeight = 54;
 constexpr int kInstructionMargin = 16;
-constexpr COLORREF kRectangleColor = RGB(255, 48, 48);
+constexpr COLORREF kMarkupRedColor = RGB(255, 0, 0);
+constexpr COLORREF kRectangleColor = kMarkupRedColor;
 constexpr int kRectangleThickness = 4;
-constexpr COLORREF kArrowColor = RGB(255, 99, 71);
+constexpr COLORREF kArrowColor = kMarkupRedColor;
 constexpr int kArrowThickness = 4;
 constexpr int kMosaicBlockSize = 14;
 

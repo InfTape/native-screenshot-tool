@@ -1,4 +1,4 @@
-﻿#include "ui/MainWindow.h"
+#include "ui/MainWindow.h"
 
 #include <Windows.h>
 #include <shobjidl.h>
