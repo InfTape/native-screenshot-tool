@@ -2,12 +2,25 @@
 
 #include <Windows.h>
 
+#include <algorithm>
+
 #include "common/RectUtils.h"
 
 namespace {
 
 bool IsPointInsideRect(const RECT& rect, const POINT& point) {
     return common::HasArea(rect) && PtInRect(&rect, point) != FALSE;
+}
+
+POINT ClampPointToRect(const POINT& point, const RECT& rect) {
+    POINT clamped{};
+    clamped.x = std::clamp(point.x, rect.left, rect.right - 1);
+    clamped.y = std::clamp(point.y, rect.top, rect.bottom - 1);
+    return clamped;
+}
+
+bool SamePoint(const POINT& left, const POINT& right) {
+    return left.x == right.x && left.y == right.y;
 }
 
 std::optional<ui::SelectionSession::InteractionMode> PreviewInteractionModeForTool(
@@ -19,6 +32,8 @@ std::optional<ui::SelectionSession::InteractionMode> PreviewInteractionModeForTo
         return ui::SelectionSession::InteractionMode::Mosaic;
     case editing::MarkupTool::Arrow:
         return ui::SelectionSession::InteractionMode::Arrow;
+    case editing::MarkupTool::Brush:
+        return ui::SelectionSession::InteractionMode::Brush;
     case editing::MarkupTool::Select:
     default:
         return std::nullopt;
@@ -170,6 +185,12 @@ void RegionSelectionOverlay::HandleLeftButtonDown(const POINT& point) {
     } else {
         session_.interaction_mode = InteractionMode::None;
     }
+
+    if (session_.interaction_mode == InteractionMode::Brush) {
+        session_.brush_points.clear();
+        AppendBrushPoint(point);
+    }
+
     SetCapture(window_);
 }
 
@@ -203,6 +224,14 @@ void RegionSelectionOverlay::HandleMouseMove(const POINT& point) {
                                           : CurrentPreviewRect();
         const bool previous_has_preview = common::HasArea(previous_preview);
         session_.preview_current = point;
+        InvalidatePreviewChange(previous_preview, previous_has_preview);
+        return;
+    }
+
+    if (session_.interaction_mode == InteractionMode::Brush) {
+        const RECT previous_preview = BrushPreviewRect();
+        const bool previous_has_preview = common::HasArea(previous_preview);
+        AppendBrushPoint(point);
         InvalidatePreviewChange(previous_preview, previous_has_preview);
     }
 }
@@ -260,7 +289,35 @@ void RegionSelectionOverlay::HandleLeftButtonUp(const POINT& point) {
         }
         InvalidatePreviewChange(previous_preview, previous_has_preview);
         RefreshFullFrame();
+        return;
     }
+
+    if (session_.interaction_mode == InteractionMode::Brush) {
+        AppendBrushPoint(point);
+        const RECT previous_preview = BrushPreviewRect();
+        const bool previous_has_preview = common::HasArea(previous_preview);
+
+        common::Result<void> apply_result = ApplyPendingBrush();
+        ResetInteraction();
+        if (!apply_result) {
+            ShowEditError(apply_result.Error());
+        }
+        InvalidatePreviewChange(previous_preview, previous_has_preview);
+        RefreshFullFrame();
+    }
+}
+
+void RegionSelectionOverlay::AppendBrushPoint(const POINT& point) {
+    if (!common::HasArea(session_.selection)) {
+        return;
+    }
+
+    const POINT clamped_point = ClampPointToRect(point, session_.selection);
+    if (!session_.brush_points.empty() && SamePoint(session_.brush_points.back(), clamped_point)) {
+        return;
+    }
+
+    session_.brush_points.push_back(clamped_point);
 }
 
 }  // namespace ui

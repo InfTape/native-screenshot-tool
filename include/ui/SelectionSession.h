@@ -19,6 +19,7 @@ public:
         Rectangle,
         Mosaic,
         Arrow,
+        Brush,
     };
 
     enum class SelectionAdjustHandle {
@@ -58,6 +59,7 @@ public:
     RECT drag_origin_selection{};
     POINT preview_start{};
     POINT preview_current{};
+    std::vector<POINT> brush_points;
 
 private:
     std::vector<capture::CapturedImage> edit_history_;

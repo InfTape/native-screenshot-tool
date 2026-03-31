@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 #include "common/Direct2D.h"
 #include "common/GdiResources.h"
@@ -19,6 +20,45 @@ POINT ClampPointToRect(const POINT& point, const RECT& rect) {
     clamped.x = std::clamp(point.x, rect.left, rect.right - 1);
     clamped.y = std::clamp(point.y, rect.top, rect.bottom - 1);
     return clamped;
+}
+
+RECT PointsBounds(const POINT* points, std::size_t point_count) {
+    if (points == nullptr || point_count == 0) {
+        return RECT{};
+    }
+
+    LONG min_x = points[0].x;
+    LONG min_y = points[0].y;
+    LONG max_x = points[0].x;
+    LONG max_y = points[0].y;
+    for (std::size_t index = 1; index < point_count; ++index) {
+        min_x = std::min(min_x, points[index].x);
+        min_y = std::min(min_y, points[index].y);
+        max_x = std::max(max_x, points[index].x);
+        max_y = std::max(max_y, points[index].y);
+    }
+
+    return RECT{min_x, min_y, max_x + 1, max_y + 1};
+}
+
+bool SamePoint(const POINT& left, const POINT& right) {
+    return left.x == right.x && left.y == right.y;
+}
+
+std::vector<POINT> ClampBrushPoints(const std::vector<POINT>& points, const RECT& rect) {
+    std::vector<POINT> clamped_points;
+    clamped_points.reserve(points.size());
+
+    for (const POINT& point : points) {
+        const POINT clamped_point = ClampPointToRect(point, rect);
+        if (!clamped_points.empty() && SamePoint(clamped_points.back(), clamped_point)) {
+            continue;
+        }
+
+        clamped_points.push_back(clamped_point);
+    }
+
+    return clamped_points;
 }
 
 void SetAlphaOpaque(capture::CapturedImage& image, const RECT& rect) {
@@ -52,6 +92,9 @@ common::Result<void> ImageMarkupService::ApplyCommand(capture::CapturedImage& im
     case MarkupTool::Arrow:
         return DrawArrow(
             image, command.clip_bounds, command.start, command.end, command.color, command.thickness);
+    case MarkupTool::Brush:
+        return DrawBrush(
+            image, command.clip_bounds, command.points, command.color, command.thickness);
     case MarkupTool::Select:
     default:
         return common::Result<void>::Failure(L"不支持的标注操作。");
@@ -187,6 +230,71 @@ common::Result<void> ImageMarkupService::DrawArrow(capture::CapturedImage& image
 
     RECT dirty_rect = common::NormalizeRect(clamped_start, clamped_end);
     InflateRect(&dirty_rect, 28, 28);
+    SetAlphaOpaque(image, dirty_rect);
+    return common::Result<void>::Success();
+}
+
+common::Result<void> ImageMarkupService::DrawBrush(capture::CapturedImage& image,
+                                                   const RECT& clip_bounds,
+                                                   const std::vector<POINT>& points,
+                                                   COLORREF color,
+                                                   int thickness) {
+    if (image.IsEmpty()) {
+        return common::Result<void>::Failure(L"当前没有可编辑的图像。");
+    }
+
+    const RECT clamped_clip = ClampToImage(image, clip_bounds);
+    if (!common::HasArea(clamped_clip)) {
+        return common::Result<void>::Failure(L"画笔绘制区域无效。");
+    }
+
+    std::vector<POINT> clamped_points = ClampBrushPoints(points, clamped_clip);
+    if (clamped_points.empty()) {
+        return common::Result<void>::Failure(L"画笔路径为空。");
+    }
+
+    common::UniqueDc memory_dc{CreateCompatibleDC(nullptr)};
+    if (!memory_dc) {
+        return common::Result<void>::Failure(L"创建画笔绘制缓冲失败。");
+    }
+
+    const BITMAPINFO bitmap_info = image.CreateBitmapInfo();
+    void* bitmap_bits = nullptr;
+    common::UniqueBitmap bitmap{
+        CreateDIBSection(memory_dc.Get(), &bitmap_info, DIB_RGB_COLORS, &bitmap_bits, nullptr, 0)};
+    if (!bitmap || bitmap_bits == nullptr) {
+        return common::Result<void>::Failure(L"创建画笔绘制位图失败。");
+    }
+
+    common::ScopedSelectObject scoped_bitmap(memory_dc.Get(), bitmap.Get());
+    if (!scoped_bitmap.IsValid()) {
+        return common::Result<void>::Failure(L"绑定画笔绘制位图失败。");
+    }
+
+    auto& pixels = image.Pixels();
+    std::copy(pixels.begin(), pixels.end(), static_cast<std::uint8_t*>(bitmap_bits));
+
+    const RECT full_image_rect{0, 0, image.Width(), image.Height()};
+    const int stroke_thickness = std::max(2, thickness);
+    auto draw_result = common::DrawPolylineOnHdc(memory_dc.Get(),
+                                                 full_image_rect,
+                                                 &clamped_clip,
+                                                 clamped_points.data(),
+                                                 clamped_points.size(),
+                                                 color,
+                                                 static_cast<float>(stroke_thickness));
+    if (!draw_result) {
+        return common::Result<void>::Failure(draw_result.Error().empty()
+                                                 ? L"Direct2D 绘制画笔失败。"
+                                                 : draw_result.Error());
+    }
+
+    std::copy(static_cast<const std::uint8_t*>(bitmap_bits),
+              static_cast<const std::uint8_t*>(bitmap_bits) + pixels.size(),
+              pixels.begin());
+
+    RECT dirty_rect = PointsBounds(clamped_points.data(), clamped_points.size());
+    InflateRect(&dirty_rect, stroke_thickness + 4, stroke_thickness + 4);
     SetAlphaOpaque(image, dirty_rect);
     return common::Result<void>::Success();
 }

@@ -2,6 +2,8 @@
 
 #include <Windows.h>
 
+#include <cstddef>
+
 #include "common/Result.h"
 
 namespace common {
@@ -20,5 +22,13 @@ Result<void> DrawArrowOnHdc(HDC hdc,
                             const POINT& end,
                             COLORREF color,
                             float thickness);
+
+Result<void> DrawPolylineOnHdc(HDC hdc,
+                               const RECT& render_bounds,
+                               const RECT* clip_rect,
+                               const POINT* points,
+                               std::size_t point_count,
+                               COLORREF color,
+                               float thickness);
 
 }  // namespace common

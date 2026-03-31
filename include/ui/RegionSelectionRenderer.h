@@ -4,6 +4,7 @@
 
 #include <array>
 #include <string>
+#include <vector>
 
 #include "capture/CapturedImage.h"
 #include "ui/OverlayPrimitives.h"
@@ -16,6 +17,11 @@ struct ArrowPreviewModel {
     RECT clip_rect{};
     POINT start{};
     POINT end{};
+};
+
+struct BrushPreviewModel {
+    RECT clip_rect{};
+    const std::vector<POINT>* points = nullptr;
 };
 
 struct RegionSelectionRenderModel {
@@ -34,6 +40,8 @@ struct RegionSelectionRenderModel {
     RECT mosaic_preview{};
     bool has_arrow_preview = false;
     ArrowPreviewModel arrow_preview{};
+    bool has_brush_preview = false;
+    BrushPreviewModel brush_preview{};
 
     editing::MarkupTool active_tool = editing::MarkupTool::Select;
     bool can_undo = false;
@@ -47,6 +55,8 @@ public:
     [[nodiscard]] int RectangleThickness() const;
     [[nodiscard]] COLORREF ArrowColor() const;
     [[nodiscard]] int ArrowThickness() const;
+    [[nodiscard]] COLORREF BrushColor() const;
+    [[nodiscard]] int BrushThickness() const;
     [[nodiscard]] int MosaicBlockSize() const;
 
     void PaintBaseImage(HDC hdc, const capture::CapturedImage& image) const;
@@ -66,6 +76,7 @@ private:
                               const RECT& clip_rect) const;
     void DrawMosaicPreview(HDC hdc, const RECT& preview_rect) const;
     void DrawArrowPreview(HDC hdc, const RECT& client_rect, const ArrowPreviewModel& preview) const;
+    void DrawBrushPreview(HDC hdc, const RECT& client_rect, const BrushPreviewModel& preview) const;
 
     OverlayTheme theme_;
 };

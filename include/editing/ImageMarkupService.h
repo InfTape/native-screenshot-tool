@@ -24,6 +24,12 @@ public:
                                           COLORREF color,
                                           int thickness);
 
+    static common::Result<void> DrawBrush(capture::CapturedImage& image,
+                                          const RECT& clip_bounds,
+                                          const std::vector<POINT>& points,
+                                          COLORREF color,
+                                          int thickness);
+
     static common::Result<void> DrawRectangle(capture::CapturedImage& image,
                                               const RECT& clip_bounds,
                                               const RECT& rect,

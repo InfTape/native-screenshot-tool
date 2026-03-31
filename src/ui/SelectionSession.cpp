@@ -23,6 +23,7 @@ void SelectionSession::ResetInteraction() {
     drag_origin_selection = RECT{};
     preview_start = POINT{};
     preview_current = POINT{};
+    brush_points.clear();
 }
 
 void SelectionSession::Finish(bool accepted_value, const RECT& current_selection) {

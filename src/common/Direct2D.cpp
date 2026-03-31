@@ -4,6 +4,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <cwchar>
 #include <string>
@@ -247,6 +248,70 @@ Result<void> DrawArrowOnHdc(HDC hdc,
     if (FAILED(hr)) {
         return Result<void>::Failure(
             FormatHresultMessage(L"Direct2D 绘制箭头失败，HRESULT=", hr));
+    }
+
+    return Result<void>::Success();
+}
+
+Result<void> DrawPolylineOnHdc(HDC hdc,
+                               const RECT& render_bounds,
+                               const RECT* clip_rect,
+                               const POINT* points,
+                               std::size_t point_count,
+                               COLORREF color,
+                               float thickness) {
+    if (points == nullptr || point_count == 0) {
+        return Result<void>::Failure(L"画笔路径为空。");
+    }
+
+    auto context_result = PrepareDcRenderTarget(hdc, render_bounds, color);
+    if (!context_result) {
+        return Result<void>::Failure(context_result.Error());
+    }
+
+    const DcRenderContext& context = context_result.Value();
+    auto stroke_style_result = CreateStrokeStyle(context.factory,
+                                                 D2D1_CAP_STYLE_ROUND,
+                                                 D2D1_CAP_STYLE_ROUND,
+                                                 D2D1_LINE_JOIN_ROUND);
+    if (!stroke_style_result) {
+        return Result<void>::Failure(stroke_style_result.Error());
+    }
+
+    const float stroke_width = std::max(2.0f, thickness);
+
+    context.render_target->BeginDraw();
+    context.render_target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    if (HasClipRect(clip_rect)) {
+        context.render_target->PushAxisAlignedClip(ToD2DRect(*clip_rect),
+                                                   D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    }
+
+    if (point_count == 1) {
+        const float radius = stroke_width * 0.5f;
+        context.render_target->FillEllipse(
+            D2D1::Ellipse(ToD2DPoint(points[0]), radius, radius), context.brush.Get());
+    } else {
+        D2D1_POINT_2F previous_point = ToD2DPoint(points[0]);
+        for (std::size_t index = 1; index < point_count; ++index) {
+            const D2D1_POINT_2F current_point = ToD2DPoint(points[index]);
+            context.render_target->DrawLine(previous_point,
+                                            current_point,
+                                            context.brush.Get(),
+                                            stroke_width,
+                                            stroke_style_result.Value().Get());
+            previous_point = current_point;
+        }
+    }
+
+    if (HasClipRect(clip_rect)) {
+        context.render_target->PopAxisAlignedClip();
+    }
+
+    const HRESULT hr = context.render_target->EndDraw();
+    if (FAILED(hr)) {
+        return Result<void>::Failure(
+            FormatHresultMessage(L"Direct2D 绘制画笔失败，HRESULT=", hr));
     }
 
     return Result<void>::Success();

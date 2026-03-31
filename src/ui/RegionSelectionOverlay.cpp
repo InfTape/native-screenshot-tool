@@ -299,7 +299,8 @@ void RegionSelectionOverlay::FlushPendingDirtyRegion() {
 
     const bool use_region_bounds = session_.interaction_mode == InteractionMode::Rectangle ||
                                    session_.interaction_mode == InteractionMode::Mosaic ||
-                                   session_.interaction_mode == InteractionMode::Arrow;
+                                   session_.interaction_mode == InteractionMode::Arrow ||
+                                   session_.interaction_mode == InteractionMode::Brush;
     if (use_region_bounds) {
         UpdateBackBuffer(region_bounds);
         SetRectRgn(pending_dirty_region_.Get(), 0, 0, 0, 0);
@@ -374,6 +375,10 @@ void RegionSelectionOverlay::InvalidatePreviewChange(const RECT& previous_previe
         break;
     case InteractionMode::Arrow:
         current_preview = PreviewVisualRect(ArrowPreviewRect());
+        current_has_preview = common::HasArea(current_preview);
+        break;
+    case InteractionMode::Brush:
+        current_preview = PreviewVisualRect(BrushPreviewRect());
         current_has_preview = common::HasArea(current_preview);
         break;
     default:
@@ -475,6 +480,20 @@ common::Result<void> RegionSelectionOverlay::ApplyPendingArrow() {
     return ApplyMarkupCommand(command);
 }
 
+common::Result<void> RegionSelectionOverlay::ApplyPendingBrush() {
+    if (session_.interaction_mode != InteractionMode::Brush || session_.brush_points.empty()) {
+        return common::Result<void>::Success();
+    }
+
+    editing::MarkupCommand command{};
+    command.tool = editing::MarkupTool::Brush;
+    command.clip_bounds = session_.selection;
+    command.points = session_.brush_points;
+    command.color = renderer_.BrushColor();
+    command.thickness = renderer_.BrushThickness();
+    return ApplyMarkupCommand(command);
+}
+
 void RegionSelectionOverlay::ShowEditError(const std::wstring& error_message) const {
     if (window_ != nullptr && !error_message.empty()) {
         MessageBoxW(window_, error_message.c_str(), L"编辑失败", MB_OK | MB_ICONERROR);
@@ -541,6 +560,11 @@ RegionSelectionRenderModel RegionSelectionOverlay::BuildRenderModel(const RECT& 
         model.arrow_preview.end =
             common::HasArea(clip_rect) ? ClampPointToRect(session_.preview_current, clip_rect)
                                        : session_.preview_current;
+    } else if (session_.interaction_mode == InteractionMode::Brush) {
+        const RECT clip_rect = common::HasArea(session_.selection) ? session_.selection : client_rect;
+        model.has_brush_preview = common::HasArea(clip_rect) && !session_.brush_points.empty();
+        model.brush_preview.clip_rect = clip_rect;
+        model.brush_preview.points = &session_.brush_points;
     }
 
     return model;

@@ -75,7 +75,7 @@ private:
         const wchar_t* label = L"";
     };
 
-    static constexpr int kButtonCount = 7;
+    static constexpr int kButtonCount = 8;
 
     std::array<Button, kButtonCount> buttons_{};
     RECT bounds_{};

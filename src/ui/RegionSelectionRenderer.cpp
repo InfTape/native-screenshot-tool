@@ -15,6 +15,8 @@ constexpr COLORREF kRectangleColor = kMarkupRedColor;
 constexpr int kRectangleThickness = 4;
 constexpr COLORREF kArrowColor = kMarkupRedColor;
 constexpr int kArrowThickness = 4;
+constexpr COLORREF kBrushColor = kMarkupRedColor;
+constexpr int kBrushThickness = 4;
 constexpr int kMosaicBlockSize = 14;
 
 }  // namespace
@@ -37,6 +39,14 @@ COLORREF RegionSelectionRenderer::ArrowColor() const {
 
 int RegionSelectionRenderer::ArrowThickness() const {
     return kArrowThickness;
+}
+
+COLORREF RegionSelectionRenderer::BrushColor() const {
+    return kBrushColor;
+}
+
+int RegionSelectionRenderer::BrushThickness() const {
+    return kBrushThickness;
 }
 
 int RegionSelectionRenderer::MosaicBlockSize() const {
@@ -82,7 +92,7 @@ void RegionSelectionRenderer::DrawInstructions(HDC hdc,
     if (start_with_full_selection) {
         DrawTextBlock(hdc,
                       text_rect,
-                      L"可直接使用马赛克、矩形或箭头标注，也可拖动或调整范围。按 Enter 完成，按 Esc 或右键取消。",
+                      L"可直接使用画笔、马赛克、矩形或箭头标注，也可拖动或调整范围。按 Enter 完成，按 Esc 或右键取消。",
                       DT_LEFT | DT_VCENTER | DT_WORDBREAK,
                       panel_style.text_color);
         return;
@@ -90,7 +100,7 @@ void RegionSelectionRenderer::DrawInstructions(HDC hdc,
 
     DrawTextBlock(hdc,
                   text_rect,
-                  L"拖动鼠标框选截图区域，松开后可继续做矩形、马赛克或箭头标注。按 Enter 完成，按 Esc 或右键取消。",
+                  L"拖动鼠标框选截图区域，松开后可继续做画笔、矩形、马赛克或箭头标注。按 Enter 完成，按 Esc 或右键取消。",
                   DT_LEFT | DT_VCENTER | DT_WORDBREAK,
                   panel_style.text_color);
 }
@@ -117,6 +127,9 @@ void RegionSelectionRenderer::PaintOverlay(HDC hdc,
     }
     if (model.has_arrow_preview) {
         DrawArrowPreview(hdc, client_rect, model.arrow_preview);
+    }
+    if (model.has_brush_preview) {
+        DrawBrushPreview(hdc, client_rect, model.brush_preview);
     }
 
     toolbar.Paint(hdc, model.active_tool, model.can_undo);
@@ -179,6 +192,22 @@ void RegionSelectionRenderer::DrawArrowPreview(HDC hdc,
                                  preview.end,
                                  ArrowColor(),
                                  static_cast<float>(ArrowThickness()));
+}
+
+void RegionSelectionRenderer::DrawBrushPreview(HDC hdc,
+                                               const RECT& client_rect,
+                                               const BrushPreviewModel& preview) const {
+    if (preview.points == nullptr || preview.points->empty()) {
+        return;
+    }
+
+    (void)common::DrawPolylineOnHdc(hdc,
+                                    client_rect,
+                                    common::HasArea(preview.clip_rect) ? &preview.clip_rect : nullptr,
+                                    preview.points->data(),
+                                    preview.points->size(),
+                                    BrushColor(),
+                                    static_cast<float>(BrushThickness()));
 }
 
 }  // namespace ui

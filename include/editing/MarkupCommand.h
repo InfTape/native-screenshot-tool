@@ -2,6 +2,8 @@
 
 #include <Windows.h>
 
+#include <vector>
+
 namespace editing {
 
 enum class MarkupTool {
@@ -9,6 +11,7 @@ enum class MarkupTool {
     Rectangle,
     Mosaic,
     Arrow,
+    Brush,
 };
 
 struct MarkupCommand {
@@ -17,6 +20,7 @@ struct MarkupCommand {
     RECT rect{};
     POINT start{};
     POINT end{};
+    std::vector<POINT> points;
     COLORREF color = RGB(255, 255, 255);
     int thickness = 0;
     int block_size = 0;

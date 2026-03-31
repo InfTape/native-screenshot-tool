@@ -43,6 +43,10 @@ RECT RegionSelectionOverlay::PreviewVisualRect(const RECT& preview_rect) const {
 }
 
 bool RegionSelectionOverlay::HasPreviewRect() const {
+    if (session_.interaction_mode == InteractionMode::Brush) {
+        return common::HasArea(BrushPreviewRect());
+    }
+
     return common::HasArea(CurrentPreviewRect());
 }
 
@@ -179,6 +183,28 @@ RECT RegionSelectionOverlay::ArrowPreviewRect() const {
 
     RECT bounds = common::NormalizeRect(session_.preview_start, session_.preview_current);
     InflateRect(&bounds, 28, 28);
+    return common::ClampRectToBounds(bounds, snapshot_->image.Width(), snapshot_->image.Height());
+}
+
+RECT RegionSelectionOverlay::BrushPreviewRect() const {
+    if (session_.interaction_mode != InteractionMode::Brush || session_.brush_points.empty()) {
+        return RECT{};
+    }
+
+    LONG min_x = session_.brush_points.front().x;
+    LONG min_y = session_.brush_points.front().y;
+    LONG max_x = session_.brush_points.front().x;
+    LONG max_y = session_.brush_points.front().y;
+    for (const POINT& point : session_.brush_points) {
+        min_x = std::min(min_x, point.x);
+        min_y = std::min(min_y, point.y);
+        max_x = std::max(max_x, point.x);
+        max_y = std::max(max_y, point.y);
+    }
+
+    RECT bounds{min_x, min_y, max_x + 1, max_y + 1};
+    const int padding = std::max(2, renderer_.BrushThickness()) + 6;
+    InflateRect(&bounds, padding, padding);
     return common::ClampRectToBounds(bounds, snapshot_->image.Width(), snapshot_->image.Height());
 }
 

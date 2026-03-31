@@ -68,6 +68,7 @@ private:
                              const RECT& toolbar_rect,
                              bool include_toolbar) const;
     RECT ArrowPreviewRect() const;
+    RECT BrushPreviewRect() const;
     RECT AdjustSelectionFromDrag(const POINT& point) const;
 
     void FinishSelection(bool accepted);
@@ -91,6 +92,8 @@ private:
     common::Result<void> ApplyPendingRectangle();
     common::Result<void> ApplyPendingMosaic();
     common::Result<void> ApplyPendingArrow();
+    common::Result<void> ApplyPendingBrush();
+    void AppendBrushPoint(const POINT& point);
     bool HandleSetCursor() const;
     bool HandleKeyDown(WPARAM w_param);
     bool HandleToolbarAction(SelectionToolbarButtonId toolbar_action);
