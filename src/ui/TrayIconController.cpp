@@ -19,21 +19,19 @@ namespace ui {
 
 TrayIconController::TrayIconController(HINSTANCE instance) : instance_(instance) {}
 
-bool TrayIconController::AddIcon(HWND window, UINT callback_message, std::wstring& error_message) {
+common::Result<void> TrayIconController::AddIcon(HWND window, UINT callback_message) {
     if (installed_) {
-        return true;
+        return common::Result<void>::Success();
     }
 
     notify_icon_data_ = BuildNotifyIconData(window, callback_message);
-    return InstallIcon(NIM_ADD, error_message);
+    return InstallIcon(NIM_ADD);
 }
 
-bool TrayIconController::ReAddIcon(HWND window,
-                                   UINT callback_message,
-                                   std::wstring& error_message) {
+common::Result<void> TrayIconController::ReAddIcon(HWND window, UINT callback_message) {
     notify_icon_data_ = BuildNotifyIconData(window, callback_message);
     installed_ = false;
-    return InstallIcon(NIM_ADD, error_message);
+    return InstallIcon(NIM_ADD);
 }
 
 void TrayIconController::RemoveIcon() {
@@ -106,14 +104,14 @@ bool TrayIconController::IsInstalled() const {
     return installed_;
 }
 
-bool TrayIconController::InstallIcon(DWORD message, std::wstring& error_message) {
+common::Result<void> TrayIconController::InstallIcon(DWORD message) {
     if (!Shell_NotifyIconW(message, &notify_icon_data_)) {
-        error_message = L"创建托盘图标失败。\n\n" + common::GetLastErrorMessage(GetLastError());
-        return false;
+        return common::Result<void>::Failure(
+            L"创建托盘图标失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
     installed_ = true;
-    return true;
+    return common::Result<void>::Success();
 }
 
 NOTIFYICONDATAW TrayIconController::BuildNotifyIconData(HWND window, UINT callback_message) const {

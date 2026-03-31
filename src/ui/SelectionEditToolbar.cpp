@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "common/GdiResources.h"
+
 namespace {
 
 constexpr int kToolbarPadding = 8;
@@ -25,8 +27,8 @@ bool PointInRectInclusive(const RECT& rect, const POINT& point) {
            point.y < rect.bottom;
 }
 
-bool IsButtonEnabled(ui::SelectionToolbarAction action, bool can_undo) {
-    return action != ui::SelectionToolbarAction::Undo || can_undo;
+bool IsButtonEnabled(const ui::SelectionToolbarButtonId& button_id, bool can_undo) {
+    return !button_id.IsCommand(ui::SelectionToolbarCommand::Undo) || can_undo;
 }
 
 }  // namespace
@@ -56,28 +58,28 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
 
     bounds_ = CreateRect(left, top, toolbar_width, toolbar_height);
 
-    static constexpr SelectionToolbarAction kActions[kButtonCount] = {
-        SelectionToolbarAction::Select,
-        SelectionToolbarAction::Rectangle,
-        SelectionToolbarAction::Mosaic,
-        SelectionToolbarAction::Arrow,
-        SelectionToolbarAction::Undo,
-        SelectionToolbarAction::Confirm,
-        SelectionToolbarAction::Cancel,
+    static constexpr SelectionToolbarButtonId kButtonIds[kButtonCount] = {
+        SelectionToolbarButtonId::Tool(editing::MarkupTool::Select),
+        SelectionToolbarButtonId::Tool(editing::MarkupTool::Rectangle),
+        SelectionToolbarButtonId::Tool(editing::MarkupTool::Mosaic),
+        SelectionToolbarButtonId::Tool(editing::MarkupTool::Arrow),
+        SelectionToolbarButtonId::Command(SelectionToolbarCommand::Undo),
+        SelectionToolbarButtonId::Command(SelectionToolbarCommand::Confirm),
+        SelectionToolbarButtonId::Command(SelectionToolbarCommand::Cancel),
     };
     static constexpr const wchar_t* kLabels[kButtonCount] = {
-        L"\u9009\u62e9",
-        L"\u77e9\u5f62",
-        L"\u9a6c\u8d5b\u514b",
-        L"\u7bad\u5934",
-        L"\u64a4\u9500",
-        L"\u5b8c\u6210",
-        L"\u53d6\u6d88",
+        L"选择",
+        L"矩形",
+        L"马赛克",
+        L"箭头",
+        L"撤销",
+        L"完成",
+        L"取消",
     };
 
     int button_left = bounds_.left + kToolbarPadding;
     for (int index = 0; index < kButtonCount; ++index) {
-        buttons_[index].action = kActions[index];
+        buttons_[index].id = kButtonIds[index];
         buttons_[index].label = kLabels[index];
         buttons_[index].bounds =
             CreateRect(button_left, bounds_.top + kToolbarPadding, kButtonWidth, kButtonHeight);
@@ -103,52 +105,54 @@ const RECT& SelectionEditToolbar::Bounds() const {
     return bounds_;
 }
 
-SelectionToolbarAction SelectionEditToolbar::HitTest(const POINT& point) const {
+SelectionToolbarButtonId SelectionEditToolbar::HitTest(const POINT& point) const {
     if (!visible_ || !PointInRectInclusive(bounds_, point)) {
-        return SelectionToolbarAction::None;
+        return SelectionToolbarButtonId::None();
     }
 
     for (const auto& button : buttons_) {
         if (PointInRectInclusive(button.bounds, point)) {
-            return button.action;
+            return button.id;
         }
     }
 
-    return SelectionToolbarAction::None;
+    return SelectionToolbarButtonId::None();
 }
 
-void SelectionEditToolbar::Paint(HDC hdc,
-                                 SelectionToolbarAction active_action,
-                                 bool can_undo) const {
+void SelectionEditToolbar::Paint(HDC hdc, editing::MarkupTool active_tool, bool can_undo) const {
     if (!visible_) {
         return;
     }
 
-    HBRUSH background_brush = CreateSolidBrush(kToolbarBackground);
-    HBRUSH border_brush = CreateSolidBrush(kToolbarBorder);
-    FillRect(hdc, &bounds_, background_brush);
-    FrameRect(hdc, &bounds_, border_brush);
-    DeleteObject(border_brush);
-    DeleteObject(background_brush);
+    common::UniqueBrush background_brush{CreateSolidBrush(kToolbarBackground)};
+    common::UniqueBrush border_brush{CreateSolidBrush(kToolbarBorder)};
+    if (!background_brush || !border_brush) {
+        return;
+    }
+
+    FillRect(hdc, &bounds_, background_brush.Get());
+    FrameRect(hdc, &bounds_, border_brush.Get());
 
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, kToolbarText);
 
     for (const auto& button : buttons_) {
-        const bool is_active = button.action == active_action;
-        const bool is_primary_action = button.action == SelectionToolbarAction::Confirm;
-        const bool is_enabled = IsButtonEnabled(button.action, can_undo);
+        const bool is_active = button.id.IsTool() && button.id.tool == active_tool;
+        const bool is_primary_action = button.id.IsCommand(SelectionToolbarCommand::Confirm);
+        const bool is_enabled = IsButtonEnabled(button.id, can_undo);
         const COLORREF fill_color = !is_enabled
                                         ? kToolbarDisabled
                                         : (is_active ? kToolbarActive
                                                      : (is_primary_action ? kToolbarAction
                                                                           : kToolbarBackground));
-        HBRUSH button_brush = CreateSolidBrush(fill_color);
-        HBRUSH button_border = CreateSolidBrush(kToolbarBorder);
-        FillRect(hdc, &button.bounds, button_brush);
-        FrameRect(hdc, &button.bounds, button_border);
-        DeleteObject(button_border);
-        DeleteObject(button_brush);
+        common::UniqueBrush button_brush{CreateSolidBrush(fill_color)};
+        common::UniqueBrush button_border{CreateSolidBrush(kToolbarBorder)};
+        if (!button_brush || !button_border) {
+            continue;
+        }
+
+        FillRect(hdc, &button.bounds, button_brush.Get());
+        FrameRect(hdc, &button.bounds, button_border.Get());
 
         RECT text_rect = button.bounds;
         InflateRect(&text_rect, -6, -4);

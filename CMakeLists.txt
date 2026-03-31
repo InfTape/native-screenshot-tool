@@ -10,8 +10,14 @@ add_executable(NativeScreenshot WIN32
     src/main.cpp
     src/app/App.cpp
     src/ui/MainWindow.cpp
+    src/ui/OverlayPrimitives.cpp
+    src/ui/RegionSelectionBuffers.cpp
+    src/ui/RegionSelectionOverlay.Geometry.cpp
+    src/ui/RegionSelectionOverlay.Input.cpp
     src/ui/RegionSelectionOverlay.cpp
+    src/ui/RegionSelectionRenderer.cpp
     src/ui/SelectionEditToolbar.cpp
+    src/ui/SelectionSession.cpp
     src/ui/WindowSelectionOverlay.cpp
     src/ui/TrayIconController.cpp
     src/editing/ImageMarkupService.cpp
@@ -31,12 +37,18 @@ add_executable(NativeScreenshot WIN32
     src/common/RectUtils.cpp
     src/common/Win32Error.cpp
     include/app/App.h
+    include/common/GdiResources.h
     include/ui/MainWindow.h
+    include/ui/OverlayPrimitives.h
+    include/ui/RegionSelectionBuffers.h
     include/ui/RegionSelectionOverlay.h
+    include/ui/RegionSelectionRenderer.h
     include/ui/SelectionEditToolbar.h
+    include/ui/SelectionSession.h
     include/ui/WindowSelectionOverlay.h
     include/ui/TrayIconController.h
     include/editing/ImageMarkupService.h
+    include/editing/MarkupCommand.h
     include/hotkey/HotkeyDefinition.h
     include/hotkey/HotkeyManager.h
     include/capture/CapturedImage.h
@@ -55,6 +67,7 @@ add_executable(NativeScreenshot WIN32
     include/common/Direct2D.h
     include/common/DpiAwareness.h
     include/common/RectUtils.h
+    include/common/Result.h
     include/common/Win32Error.h
 )
 

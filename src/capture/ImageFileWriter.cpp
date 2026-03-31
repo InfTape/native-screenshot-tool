@@ -55,105 +55,103 @@ HRESULT CreateImagingFactory(ComPtr<IWICImagingFactory>& factory) {
 
 namespace capture {
 
-bool ImageFileWriter::Write(const std::wstring& path,
-                            const CapturedImage& image,
-                            ImageFileFormat format,
-                            std::wstring& error_message) const {
+common::Result<void> ImageFileWriter::Write(const std::wstring& path,
+                                            const CapturedImage& image,
+                                            ImageFileFormat format) const {
     switch (format) {
     case ImageFileFormat::Png:
-        return WritePng(path, image, error_message);
+        return WritePng(path, image);
     case ImageFileFormat::Bmp:
-        return bitmap_writer_.WriteBmp(path, image, error_message);
+        return bitmap_writer_.WriteBmp(path, image);
     }
 
-    error_message = L"不支持的图像保存格式。";
-    return false;
+    return common::Result<void>::Failure(L"不支持的图像保存格式。");
 }
 
-bool ImageFileWriter::WritePng(const std::wstring& path,
-                               const CapturedImage& image,
-                               std::wstring& error_message) const {
+common::Result<void> ImageFileWriter::WritePng(const std::wstring& path,
+                                               const CapturedImage& image) const {
     if (image.IsEmpty()) {
-        error_message = L"当前没有可保存的截图。";
-        return false;
+        return common::Result<void>::Failure(L"当前没有可保存的截图。");
     }
 
     const std::size_t pixel_bytes = image.RowStride() * static_cast<std::size_t>(image.Height());
     if (pixel_bytes > static_cast<std::size_t>(std::numeric_limits<UINT>::max())) {
-        error_message = L"图像过大，无法保存为 PNG。";
-        return false;
+        return common::Result<void>::Failure(L"图像过大，无法保存为 PNG。");
     }
 
     ScopedComInitialization com_initialization;
     if (!com_initialization.IsAvailable()) {
-        error_message =
-            L"初始化 PNG 编码组件失败。\n\n" + common::GetLastErrorMessage(com_initialization.Result());
-        return false;
+        return common::Result<void>::Failure(
+            L"初始化 PNG 编码组件失败。\n\n" +
+            common::GetLastErrorMessage(static_cast<DWORD>(com_initialization.Result())));
     }
 
     ComPtr<IWICImagingFactory> factory;
     HRESULT hr = CreateImagingFactory(factory);
     if (FAILED(hr)) {
-        error_message = L"创建 PNG 编码工厂失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"创建 PNG 编码工厂失败。\n\n" + common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     ComPtr<IWICStream> stream;
     hr = factory->CreateStream(&stream);
     if (FAILED(hr)) {
-        error_message = L"创建输出流失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"创建输出流失败。\n\n" + common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
     if (FAILED(hr)) {
-        error_message = L"无法打开目标文件进行写入。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"无法打开目标文件进行写入。\n\n" +
+            common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     ComPtr<IWICBitmapEncoder> encoder;
     hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
     if (FAILED(hr)) {
-        error_message = L"创建 PNG 编码器失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"创建 PNG 编码器失败。\n\n" + common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
     if (FAILED(hr)) {
-        error_message = L"初始化 PNG 编码器失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"初始化 PNG 编码器失败。\n\n" +
+            common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     ComPtr<IWICBitmapFrameEncode> frame;
     ComPtr<IPropertyBag2> property_bag;
     hr = encoder->CreateNewFrame(&frame, &property_bag);
     if (FAILED(hr)) {
-        error_message = L"创建 PNG 帧失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"创建 PNG 帧失败。\n\n" + common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     hr = frame->Initialize(property_bag.Get());
     if (FAILED(hr)) {
-        error_message = L"初始化 PNG 帧失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"初始化 PNG 帧失败。\n\n" + common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     hr = frame->SetSize(static_cast<UINT>(image.Width()), static_cast<UINT>(image.Height()));
     if (FAILED(hr)) {
-        error_message = L"设置 PNG 图像尺寸失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"设置 PNG 图像尺寸失败。\n\n" + common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     WICPixelFormatGUID pixel_format = GUID_WICPixelFormat32bppBGRA;
     hr = frame->SetPixelFormat(&pixel_format);
     if (FAILED(hr)) {
-        error_message = L"设置 PNG 像素格式失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"设置 PNG 像素格式失败。\n\n" +
+            common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     if (pixel_format != GUID_WICPixelFormat32bppBGRA) {
-        error_message = L"系统 PNG 编码器不支持当前像素格式。";
-        return false;
+        return common::Result<void>::Failure(
+            L"系统 PNG 编码器不支持当前像素格式。");
     }
 
     hr = frame->WritePixels(static_cast<UINT>(image.Height()),
@@ -161,23 +159,24 @@ bool ImageFileWriter::WritePng(const std::wstring& path,
                             static_cast<UINT>(pixel_bytes),
                             const_cast<BYTE*>(image.Pixels().data()));
     if (FAILED(hr)) {
-        error_message = L"写入 PNG 像素数据失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"写入 PNG 像素数据失败。\n\n" +
+            common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     hr = frame->Commit();
     if (FAILED(hr)) {
-        error_message = L"提交 PNG 帧失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"提交 PNG 帧失败。\n\n" + common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
     hr = encoder->Commit();
     if (FAILED(hr)) {
-        error_message = L"提交 PNG 文件失败。\n\n" + common::GetLastErrorMessage(hr);
-        return false;
+        return common::Result<void>::Failure(
+            L"提交 PNG 文件失败。\n\n" + common::GetLastErrorMessage(static_cast<DWORD>(hr)));
     }
 
-    return true;
+    return common::Result<void>::Success();
 }
 
 }  // namespace capture

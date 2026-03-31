@@ -2,18 +2,16 @@
 
 #include <Windows.h>
 
-#include <string>
-
+#include "common/Result.h"
 #include "hotkey/HotkeyDefinition.h"
 
 namespace hotkey {
 
 class HotkeyManager {
 public:
-    bool RegisterHotkey(HWND window,
-                        int identifier,
-                        const HotkeyDefinition& definition,
-                        std::wstring& error_message) const;
+    common::Result<void> RegisterHotkey(HWND window,
+                                        int identifier,
+                                        const HotkeyDefinition& definition) const;
     void UnregisterHotkey(HWND window, int identifier) const;
 };
 

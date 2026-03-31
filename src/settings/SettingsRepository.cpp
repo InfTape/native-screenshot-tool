@@ -46,14 +46,10 @@ bool SaveHotkey(const std::wstring& path,
     const std::wstring modifiers = std::to_wstring(definition.modifiers);
     const std::wstring virtual_key = std::to_wstring(definition.virtual_key);
 
-    return WritePrivateProfileStringW(kHotkeySection,
-                                      modifiers_key,
-                                      modifiers.c_str(),
-                                      path.c_str()) != FALSE &&
-           WritePrivateProfileStringW(kHotkeySection,
-                                      virtual_key_key,
-                                      virtual_key.c_str(),
-                                      path.c_str()) != FALSE;
+    return WritePrivateProfileStringW(
+               kHotkeySection, modifiers_key, modifiers.c_str(), path.c_str()) != FALSE &&
+           WritePrivateProfileStringW(
+               kHotkeySection, virtual_key_key, virtual_key.c_str(), path.c_str()) != FALSE;
 }
 
 void LoadSaveDirectory(const std::wstring& path, settings::AppSettings& settings) {
@@ -64,11 +60,11 @@ void LoadSaveDirectory(const std::wstring& path, settings::AppSettings& settings
 }
 
 void LoadLaunchAtStartup(const std::wstring& path, settings::AppSettings& settings) {
-    settings.launch_at_startup =
-        GetPrivateProfileIntW(kStartupSection,
-                              kLaunchAtStartupKey,
-                              settings.launch_at_startup ? 1 : 0,
-                              path.c_str()) != 0;
+    settings.launch_at_startup = GetPrivateProfileIntW(
+                                     kStartupSection,
+                                     kLaunchAtStartupKey,
+                                     settings.launch_at_startup ? 1 : 0,
+                                     path.c_str()) != 0;
 }
 
 void LoadSaveFormat(const std::wstring& path, settings::AppSettings& settings) {
@@ -105,39 +101,37 @@ bool SaveLaunchAtStartup(const std::wstring& path, const settings::AppSettings& 
 
 namespace settings {
 
-std::optional<std::filesystem::path> SettingsRepository::ResolveSettingsPath(
-    std::wstring& error_message) const {
+common::Result<std::filesystem::path> SettingsRepository::ResolveSettingsPath() const {
     DWORD required_size = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
 
     std::filesystem::path base_directory;
     if (required_size > 0) {
         std::vector<wchar_t> buffer(required_size);
         if (GetEnvironmentVariableW(L"LOCALAPPDATA", buffer.data(), required_size) == 0) {
-            error_message = L"读取 LOCALAPPDATA 失败。";
-            return std::nullopt;
+            return common::Result<std::filesystem::path>::Failure(L"读取 LOCALAPPDATA 失败。");
         }
         base_directory = buffer.data();
     } else {
         wchar_t module_path[MAX_PATH]{};
         if (GetModuleFileNameW(nullptr, module_path, MAX_PATH) == 0) {
-            error_message = L"获取程序目录失败。";
-            return std::nullopt;
+            return common::Result<std::filesystem::path>::Failure(L"获取程序目录失败。");
         }
         base_directory = std::filesystem::path(module_path).parent_path();
     }
 
-    return base_directory / L"NativeScreenshot" / L"settings.ini";
+    return common::Result<std::filesystem::path>::Success(
+        base_directory / L"NativeScreenshot" / L"settings.ini");
 }
 
-bool SettingsRepository::Load(AppSettings& settings, std::wstring& error_message) const {
-    settings = AppSettings{};
+common::Result<AppSettings> SettingsRepository::Load() const {
+    AppSettings settings{};
 
-    const auto settings_path = ResolveSettingsPath(error_message);
-    if (!settings_path.has_value()) {
-        return false;
+    auto settings_path = ResolveSettingsPath();
+    if (!settings_path) {
+        return common::Result<AppSettings>::Failure(settings_path.Error());
     }
 
-    const auto path_string = settings_path->wstring();
+    const auto path_string = settings_path.Value().wstring();
     LoadHotkey(path_string, kFullModifiersKey, kFullVirtualKeyKey, settings.full_capture_hotkey);
     LoadHotkey(path_string,
                kRegionModifiersKey,
@@ -151,23 +145,22 @@ bool SettingsRepository::Load(AppSettings& settings, std::wstring& error_message
     LoadSaveDirectory(path_string, settings);
     LoadSaveFormat(path_string, settings);
 
-    return true;
+    return common::Result<AppSettings>::Success(std::move(settings));
 }
 
-bool SettingsRepository::Save(const AppSettings& settings, std::wstring& error_message) const {
-    const auto settings_path = ResolveSettingsPath(error_message);
-    if (!settings_path.has_value()) {
-        return false;
+common::Result<void> SettingsRepository::Save(const AppSettings& settings) const {
+    auto settings_path = ResolveSettingsPath();
+    if (!settings_path) {
+        return common::Result<void>::Failure(settings_path.Error());
     }
 
     try {
-        std::filesystem::create_directories(settings_path->parent_path());
+        std::filesystem::create_directories(settings_path.Value().parent_path());
     } catch (const std::filesystem::filesystem_error&) {
-        error_message = L"创建设置目录失败。";
-        return false;
+        return common::Result<void>::Failure(L"创建设置目录失败。");
     }
 
-    const auto path_string = settings_path->wstring();
+    const auto path_string = settings_path.Value().wstring();
     if (!SaveHotkey(path_string,
                     kFullModifiersKey,
                     kFullVirtualKeyKey,
@@ -182,11 +175,10 @@ bool SettingsRepository::Save(const AppSettings& settings, std::wstring& error_m
                     settings.window_capture_hotkey) ||
         !SaveLaunchAtStartup(path_string, settings) ||
         !SaveCaptureSettings(path_string, settings)) {
-        error_message = L"写入设置文件失败。";
-        return false;
+        return common::Result<void>::Failure(L"写入设置文件失败。");
     }
 
-    return true;
+    return common::Result<void>::Success();
 }
 
 }  // namespace settings

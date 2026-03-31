@@ -3,14 +3,13 @@
 #include <string>
 
 #include "capture/CapturedImage.h"
+#include "common/Result.h"
 
 namespace capture {
 
 class BitmapFileWriter {
 public:
-    bool WriteBmp(const std::wstring& path,
-                  const CapturedImage& image,
-                  std::wstring& error_message) const;
+    common::Result<void> WriteBmp(const std::wstring& path, const CapturedImage& image) const;
 };
 
 }  // namespace capture

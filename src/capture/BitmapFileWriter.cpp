@@ -9,12 +9,10 @@
 
 namespace capture {
 
-bool BitmapFileWriter::WriteBmp(const std::wstring& path,
-                                const CapturedImage& image,
-                                std::wstring& error_message) const {
+common::Result<void> BitmapFileWriter::WriteBmp(const std::wstring& path,
+                                                const CapturedImage& image) const {
     if (image.IsEmpty()) {
-        error_message = L"当前没有可保存的截图。";
-        return false;
+        return common::Result<void>::Failure(L"当前没有可保存的截图。");
     }
 
     const auto row_stride = image.RowStride();
@@ -24,8 +22,7 @@ bool BitmapFileWriter::WriteBmp(const std::wstring& path,
 
     if (pixel_bytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max()) ||
         file_bytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        error_message = L"图像过大，无法保存为标准 BMP。";
-        return false;
+        return common::Result<void>::Failure(L"图像过大，无法保存为标准 BMP。");
     }
 
     BITMAPFILEHEADER file_header{};
@@ -46,8 +43,7 @@ bool BitmapFileWriter::WriteBmp(const std::wstring& path,
 
     std::ofstream output(std::filesystem::path(path), std::ios::binary);
     if (!output.is_open()) {
-        error_message = L"无法打开目标文件进行写入。";
-        return false;
+        return common::Result<void>::Failure(L"无法打开目标文件进行写入。");
     }
 
     output.write(reinterpret_cast<const char*>(&file_header), sizeof(file_header));
@@ -59,11 +55,10 @@ bool BitmapFileWriter::WriteBmp(const std::wstring& path,
     }
 
     if (!output.good()) {
-        error_message = L"写入 BMP 文件时发生错误。";
-        return false;
+        return common::Result<void>::Failure(L"写入 BMP 文件时发生错误。");
     }
 
-    return true;
+    return common::Result<void>::Success();
 }
 
 }  // namespace capture

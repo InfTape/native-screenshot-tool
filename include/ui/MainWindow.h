@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 
+#include "common/Result.h"
 #include "capture/AutoSaveService.h"
 #include "capture/CapturedImage.h"
 #include "capture/DesktopSnapshot.h"
@@ -35,6 +36,12 @@ public:
     void Show(int nCmdShow, bool start_hidden_to_tray);
 
 private:
+    struct SaveImageOutcome {
+        std::wstring saved_path;
+        std::wstring clipboard_error_message;
+        bool clipboard_failed = false;
+    };
+
     static constexpr wchar_t kClassName[] = L"NativeScreenshot.MainWindow";
     static constexpr std::size_t kHotkeySlotCount = 3;
 
@@ -56,27 +63,25 @@ private:
     void CancelHotkeyRecording();
     void CommitRecordedHotkey(UINT virtual_key);
     bool ApplyRecordedHotkey(HotkeySlot slot, const hotkey::HotkeyDefinition& definition);
-    bool RegisterConfiguredHotkeys(bool show_error_messages,
-                                   std::wstring* error_summary = nullptr);
+    common::Result<void> RegisterConfiguredHotkeys();
     void UnregisterAllHotkeys();
     bool TriggerCaptureByHotkey(int hotkey_identifier);
     void HideToTray(bool show_hint = true);
     void ShowFromTray();
     void ExitApplication();
     void HandleTrayCommand(TrayMenuCommand command);
-    std::optional<capture::DesktopSnapshot> CaptureSnapshot(std::wstring& error_message) const;
-    bool SaveImageToConfiguredDirectory(const capture::CapturedImage& image,
-                                        std::wstring& saved_path,
-                                        std::wstring& error_message,
-                                        bool& clipboard_failed) const;
+    common::Result<capture::DesktopSnapshot> CaptureSnapshot() const;
+    common::Result<SaveImageOutcome> SaveImageToConfiguredDirectory(
+        const capture::CapturedImage& image) const;
+    bool FinalizeCapturedImage(const std::wstring& capture_name);
     void UpdateSaveSettingsDisplay() const;
     void UpdateStartupOptionDisplay() const;
     void UpdateSaveButtonLabel() const;
     bool EnsureSaveDirectoryConfigured();
-    bool ResolveDefaultSaveDirectory(std::wstring& directory, std::wstring& error_message) const;
+    common::Result<std::wstring> ResolveDefaultSaveDirectory() const;
     bool ChooseSaveDirectory(std::wstring& selected_directory) const;
     void ApplySaveFormatSelection();
-    bool SyncLaunchAtStartupSetting(bool enabled, std::wstring& error_message) const;
+    common::Result<void> SyncLaunchAtStartupSetting(bool enabled) const;
     void ToggleLaunchAtStartup();
     LRESULT HandleMessage(UINT message, WPARAM w_param, LPARAM l_param);
 

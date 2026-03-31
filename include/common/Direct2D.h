@@ -2,25 +2,23 @@
 
 #include <Windows.h>
 
-#include <string>
+#include "common/Result.h"
 
 namespace common {
 
-bool DrawRectangleOnHdc(HDC hdc,
-                        const RECT& render_bounds,
-                        const RECT* clip_rect,
-                        const RECT& rect,
-                        COLORREF color,
-                        float thickness,
-                        std::wstring& error_message);
+Result<void> DrawRectangleOnHdc(HDC hdc,
+                                const RECT& render_bounds,
+                                const RECT* clip_rect,
+                                const RECT& rect,
+                                COLORREF color,
+                                float thickness);
 
-bool DrawArrowOnHdc(HDC hdc,
-                    const RECT& render_bounds,
-                    const RECT* clip_rect,
-                    const POINT& start,
-                    const POINT& end,
-                    COLORREF color,
-                    float thickness,
-                    std::wstring& error_message);
+Result<void> DrawArrowOnHdc(HDC hdc,
+                            const RECT& render_bounds,
+                            const RECT* clip_rect,
+                            const POINT& start,
+                            const POINT& end,
+                            COLORREF color,
+                            float thickness);
 
 }  // namespace common

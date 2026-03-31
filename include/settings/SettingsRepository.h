@@ -1,21 +1,19 @@
 #pragma once
 
 #include <filesystem>
-#include <optional>
-#include <string>
 
+#include "common/Result.h"
 #include "settings/AppSettings.h"
 
 namespace settings {
 
 class SettingsRepository {
 public:
-    bool Load(AppSettings& settings, std::wstring& error_message) const;
-    bool Save(const AppSettings& settings, std::wstring& error_message) const;
+    common::Result<AppSettings> Load() const;
+    common::Result<void> Save(const AppSettings& settings) const;
 
 private:
-    std::optional<std::filesystem::path> ResolveSettingsPath(
-        std::wstring& error_message) const;
+    common::Result<std::filesystem::path> ResolveSettingsPath() const;
 };
 
 }  // namespace settings

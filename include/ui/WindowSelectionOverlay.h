@@ -3,12 +3,12 @@
 #include <Windows.h>
 
 #include <optional>
-#include <string>
 #include <vector>
 
 #include "capture/DesktopSnapshot.h"
 #include "capture/WindowInfo.h"
 #include "capture/WindowLocator.h"
+#include "common/Result.h"
 
 namespace ui {
 
@@ -16,17 +16,16 @@ class WindowSelectionOverlay {
 public:
     explicit WindowSelectionOverlay(HINSTANCE instance);
 
-    std::optional<capture::WindowInfo> SelectWindow(
+    common::Result<std::optional<capture::WindowInfo>> SelectWindow(
         const capture::DesktopSnapshot& snapshot,
-        const std::vector<HWND>& excluded_windows,
-        std::wstring& error_message);
+        const std::vector<HWND>& excluded_windows);
 
 private:
     static constexpr wchar_t kClassName[] = L"NativeScreenshot.WindowSelectionOverlay";
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param);
 
-    bool RegisterWindowClass() const;
+    common::Result<void> RegisterWindowClass() const;
     bool UpdateHoveredWindow(const POINT& client_point);
     RECT HoveredWindowRectInClient() const;
     void FinishSelection(bool accepted);

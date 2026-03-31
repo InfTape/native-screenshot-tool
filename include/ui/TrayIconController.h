@@ -6,6 +6,8 @@
 #include <optional>
 #include <string>
 
+#include "common/Result.h"
+
 namespace ui {
 
 enum class TrayMenuCommand {
@@ -21,15 +23,15 @@ class TrayIconController {
 public:
     explicit TrayIconController(HINSTANCE instance);
 
-    bool AddIcon(HWND window, UINT callback_message, std::wstring& error_message);
-    bool ReAddIcon(HWND window, UINT callback_message, std::wstring& error_message);
+    common::Result<void> AddIcon(HWND window, UINT callback_message);
+    common::Result<void> ReAddIcon(HWND window, UINT callback_message);
     void RemoveIcon();
     bool ShowBalloon(const std::wstring& title, const std::wstring& message) const;
     std::optional<TrayMenuCommand> ShowContextMenu(HWND owner, const POINT& screen_point) const;
     bool IsInstalled() const;
 
 private:
-    bool InstallIcon(DWORD message, std::wstring& error_message);
+    common::Result<void> InstallIcon(DWORD message);
     NOTIFYICONDATAW BuildNotifyIconData(HWND window, UINT callback_message) const;
 
     HINSTANCE instance_ = nullptr;

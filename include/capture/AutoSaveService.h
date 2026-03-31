@@ -8,6 +8,7 @@
 #include "capture/ImageClipboardWriter.h"
 #include "capture/ImageFileFormat.h"
 #include "capture/ImageFileWriter.h"
+#include "common/Result.h"
 
 namespace capture {
 
@@ -25,14 +26,14 @@ enum class AutoSaveStatus {
 struct AutoSaveResult {
     AutoSaveStatus status = AutoSaveStatus::SaveFailed;
     std::wstring saved_path;
+    std::wstring clipboard_error_message;
 };
 
 class AutoSaveService {
 public:
-    AutoSaveResult SaveImage(HWND owner,
-                             const CapturedImage& image,
-                             const AutoSaveOptions& options,
-                             std::wstring& error_message) const;
+    common::Result<AutoSaveResult> SaveImage(HWND owner,
+                                             const CapturedImage& image,
+                                             const AutoSaveOptions& options) const;
 
 private:
     std::wstring BuildFileName(const SYSTEMTIME& local_time) const;

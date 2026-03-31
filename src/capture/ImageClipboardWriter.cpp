@@ -4,16 +4,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 namespace capture {
 
-bool ImageClipboardWriter::CopyToClipboard(HWND owner,
-                                           const CapturedImage& image,
-                                           std::wstring& error_message) const {
+common::Result<void> ImageClipboardWriter::CopyToClipboard(HWND owner,
+                                                           const CapturedImage& image) const {
     if (image.IsEmpty()) {
-        error_message = L"当前没有可复制到剪贴板的截图。";
-        return false;
+        return common::Result<void>::Failure(L"当前没有可复制到剪贴板的截图。");
     }
 
     const std::size_t row_stride = image.RowStride();
@@ -21,8 +20,7 @@ bool ImageClipboardWriter::CopyToClipboard(HWND owner,
     const std::size_t total_bytes = sizeof(BITMAPINFOHEADER) + pixel_bytes;
     if (pixel_bytes > static_cast<std::size_t>(std::numeric_limits<DWORD>::max()) ||
         total_bytes > static_cast<std::size_t>(std::numeric_limits<SIZE_T>::max())) {
-        error_message = L"图像过大，无法复制到剪贴板。";
-        return false;
+        return common::Result<void>::Failure(L"图像过大，无法复制到剪贴板。");
     }
 
     BITMAPINFOHEADER info_header{};
@@ -38,15 +36,13 @@ bool ImageClipboardWriter::CopyToClipboard(HWND owner,
 
     HGLOBAL clipboard_data = GlobalAlloc(GMEM_MOVEABLE, total_bytes);
     if (clipboard_data == nullptr) {
-        error_message = L"分配剪贴板内存失败。";
-        return false;
+        return common::Result<void>::Failure(L"分配剪贴板内存失败。");
     }
 
     void* locked_memory = GlobalLock(clipboard_data);
     if (locked_memory == nullptr) {
         GlobalFree(clipboard_data);
-        error_message = L"锁定剪贴板内存失败。";
-        return false;
+        return common::Result<void>::Failure(L"锁定剪贴板内存失败。");
     }
 
     auto* destination = static_cast<std::uint8_t*>(locked_memory);
@@ -62,26 +58,23 @@ bool ImageClipboardWriter::CopyToClipboard(HWND owner,
 
     if (!OpenClipboard(owner)) {
         GlobalFree(clipboard_data);
-        error_message = L"无法打开系统剪贴板。";
-        return false;
+        return common::Result<void>::Failure(L"无法打开系统剪贴板。");
     }
 
     if (!EmptyClipboard()) {
         CloseClipboard();
         GlobalFree(clipboard_data);
-        error_message = L"清空系统剪贴板失败。";
-        return false;
+        return common::Result<void>::Failure(L"清空系统剪贴板失败。");
     }
 
     if (SetClipboardData(CF_DIB, clipboard_data) == nullptr) {
         CloseClipboard();
         GlobalFree(clipboard_data);
-        error_message = L"写入剪贴板失败。";
-        return false;
+        return common::Result<void>::Failure(L"写入剪贴板失败。");
     }
 
     CloseClipboard();
-    return true;
+    return common::Result<void>::Success();
 }
 
 }  // namespace capture

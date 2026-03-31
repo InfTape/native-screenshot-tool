@@ -54,22 +54,19 @@ void CapturedImage::EnsureUniquePixels() {
     }
 }
 
-std::optional<CapturedImage> CapturedImage::Crop(const RECT& region,
-                                                 std::wstring& error_message) const {
+common::Result<CapturedImage> CapturedImage::Crop(const RECT& region) const {
     if (IsEmpty()) {
-        error_message = L"当前没有可裁剪的图像。";
-        return std::nullopt;
+        return common::Result<CapturedImage>::Failure(L"当前没有可裁剪的图像。");
     }
 
     const RECT clamped = common::ClampRectToBounds(region, width_, height_);
     if (!common::HasArea(clamped)) {
-        error_message = L"选区无效，无法生成截图。";
-        return std::nullopt;
+        return common::Result<CapturedImage>::Failure(L"选区无效，无法生成截图。");
     }
 
     if (clamped.left == 0 && clamped.top == 0 && clamped.right == width_ &&
         clamped.bottom == height_) {
-        return *this;
+        return common::Result<CapturedImage>::Success(*this);
     }
 
     const int cropped_width = common::RectWidth(clamped);
@@ -90,7 +87,8 @@ std::optional<CapturedImage> CapturedImage::Crop(const RECT& region,
                     cropped_pixels.data() + dst_offset);
     }
 
-    return CapturedImage(cropped_width, cropped_height, std::move(cropped_pixels));
+    return common::Result<CapturedImage>::Success(
+        CapturedImage(cropped_width, cropped_height, std::move(cropped_pixels)));
 }
 
 BITMAPINFO CapturedImage::CreateBitmapInfo() const {

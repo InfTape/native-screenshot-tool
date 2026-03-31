@@ -5,14 +5,13 @@
 #include <string>
 
 #include "capture/CapturedImage.h"
+#include "common/Result.h"
 
 namespace capture {
 
 class ImageClipboardWriter {
 public:
-    bool CopyToClipboard(HWND owner,
-                         const CapturedImage& image,
-                         std::wstring& error_message) const;
+    common::Result<void> CopyToClipboard(HWND owner, const CapturedImage& image) const;
 };
 
 }  // namespace capture

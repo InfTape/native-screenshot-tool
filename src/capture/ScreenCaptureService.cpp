@@ -5,76 +5,40 @@
 #include <cstring>
 #include <vector>
 
+#include "common/GdiResources.h"
 #include "common/Win32Error.h"
-
-namespace {
-
-struct ScreenDcHandle {
-    HDC value = nullptr;
-
-    ~ScreenDcHandle() {
-        if (value != nullptr) {
-            ReleaseDC(nullptr, value);
-        }
-    }
-};
-
-struct MemoryDcHandle {
-    HDC value = nullptr;
-
-    ~MemoryDcHandle() {
-        if (value != nullptr) {
-            DeleteDC(value);
-        }
-    }
-};
-
-struct BitmapHandle {
-    HBITMAP value = nullptr;
-
-    ~BitmapHandle() {
-        if (value != nullptr) {
-            DeleteObject(value);
-        }
-    }
-};
-
-}  // namespace
 
 namespace capture {
 
-std::optional<CapturedImage> ScreenCaptureService::CaptureDesktop(
-    std::wstring& error_message) const {
-    auto snapshot = CaptureDesktopSnapshot(error_message);
-    if (!snapshot.has_value()) {
-        return std::nullopt;
+common::Result<CapturedImage> ScreenCaptureService::CaptureDesktop() const {
+    auto snapshot = CaptureDesktopSnapshot();
+    if (!snapshot) {
+        return common::Result<CapturedImage>::Failure(snapshot.Error());
     }
 
-    return std::move(snapshot->image);
+    return common::Result<CapturedImage>::Success(std::move(snapshot.Value().image));
 }
 
-std::optional<DesktopSnapshot> ScreenCaptureService::CaptureDesktopSnapshot(
-    std::wstring& error_message) const {
+common::Result<DesktopSnapshot> ScreenCaptureService::CaptureDesktopSnapshot() const {
     const int origin_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
     const int origin_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     const int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
     if (width <= 0 || height <= 0) {
-        error_message = L"无法获取桌面尺寸。";
-        return std::nullopt;
+        return common::Result<DesktopSnapshot>::Failure(L"无法获取桌面尺寸。");
     }
 
-    ScreenDcHandle screen_dc{GetDC(nullptr)};
-    if (screen_dc.value == nullptr) {
-        error_message = L"获取屏幕 DC 失败。\n\n" + common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+    common::WindowDcHandle screen_dc(nullptr, GetDC(nullptr));
+    if (!screen_dc) {
+        return common::Result<DesktopSnapshot>::Failure(
+            L"获取屏幕 DC 失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
-    MemoryDcHandle memory_dc{CreateCompatibleDC(screen_dc.value)};
-    if (memory_dc.value == nullptr) {
-        error_message = L"创建内存 DC 失败。\n\n" + common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+    common::UniqueDc memory_dc{CreateCompatibleDC(screen_dc.Get())};
+    if (!memory_dc) {
+        return common::Result<DesktopSnapshot>::Failure(
+            L"创建内存 DC 失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
     BITMAPINFO bitmap_info{};
@@ -86,33 +50,31 @@ std::optional<DesktopSnapshot> ScreenCaptureService::CaptureDesktopSnapshot(
     bitmap_info.bmiHeader.biCompression = BI_RGB;
 
     void* raw_pixels = nullptr;
-    BitmapHandle bitmap{
-        CreateDIBSection(screen_dc.value, &bitmap_info, DIB_RGB_COLORS, &raw_pixels, nullptr, 0)};
-    if (bitmap.value == nullptr || raw_pixels == nullptr) {
-        error_message = L"创建截图缓冲区失败。\n\n" + common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+    common::UniqueBitmap bitmap{
+        CreateDIBSection(screen_dc.Get(), &bitmap_info, DIB_RGB_COLORS, &raw_pixels, nullptr, 0)};
+    if (!bitmap || raw_pixels == nullptr) {
+        return common::Result<DesktopSnapshot>::Failure(
+            L"创建桌面截图缓冲区失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
-    const HGDIOBJ previous_object = SelectObject(memory_dc.value, bitmap.value);
-    if (previous_object == nullptr || previous_object == HGDI_ERROR) {
-        error_message = L"选择截图位图失败。\n\n" + common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+    common::ScopedSelectObject selected_bitmap(memory_dc.Get(), bitmap.Get());
+    if (!selected_bitmap.IsValid()) {
+        return common::Result<DesktopSnapshot>::Failure(
+            L"选择截图位图失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
-    const BOOL copied = BitBlt(memory_dc.value,
+    const BOOL copied = BitBlt(memory_dc.Get(),
                                0,
                                0,
                                width,
                                height,
-                               screen_dc.value,
+                               screen_dc.Get(),
                                origin_x,
                                origin_y,
                                SRCCOPY | CAPTUREBLT);
-    SelectObject(memory_dc.value, previous_object);
-
     if (!copied) {
-        error_message = L"拷贝桌面图像失败。\n\n" + common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+        return common::Result<DesktopSnapshot>::Failure(
+            L"复制桌面图像失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
     const std::size_t pixel_bytes =
@@ -124,7 +86,7 @@ std::optional<DesktopSnapshot> ScreenCaptureService::CaptureDesktopSnapshot(
     snapshot.origin_x = origin_x;
     snapshot.origin_y = origin_y;
     snapshot.image = CapturedImage(width, height, std::move(pixels));
-    return snapshot;
+    return common::Result<DesktopSnapshot>::Success(std::move(snapshot));
 }
 
 }  // namespace capture

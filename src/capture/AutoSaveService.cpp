@@ -8,29 +8,22 @@
 
 namespace capture {
 
-AutoSaveResult AutoSaveService::SaveImage(HWND owner,
-                                          const CapturedImage& image,
-                                          const AutoSaveOptions& options,
-                                          std::wstring& error_message) const {
-    AutoSaveResult result{};
-    error_message.clear();
-
+common::Result<AutoSaveResult> AutoSaveService::SaveImage(HWND owner,
+                                                          const CapturedImage& image,
+                                                          const AutoSaveOptions& options) const {
     if (image.IsEmpty()) {
-        error_message = L"当前没有可保存的截图。";
-        return result;
+        return common::Result<AutoSaveResult>::Failure(L"当前没有可保存的截图。");
     }
 
     if (options.directory.empty()) {
-        error_message = L"请先在主窗口设置保存目录。";
-        return result;
+        return common::Result<AutoSaveResult>::Failure(L"请先在主窗口设置保存目录。");
     }
 
     std::filesystem::path directory(options.directory);
     try {
         std::filesystem::create_directories(directory);
     } catch (const std::filesystem::filesystem_error&) {
-        error_message = L"创建保存目录失败。";
-        return result;
+        return common::Result<AutoSaveResult>::Failure(L"创建保存目录失败。");
     }
 
     SYSTEMTIME local_time{};
@@ -46,19 +39,23 @@ AutoSaveResult AutoSaveService::SaveImage(HWND owner,
         output_path = directory / (builder.str() + extension);
     }
 
+    AutoSaveResult result{};
     result.saved_path = output_path.wstring();
-    if (!image_file_writer_.Write(result.saved_path, image, options.format, error_message)) {
-        result.status = AutoSaveStatus::SaveFailed;
-        return result;
+
+    auto write_result = image_file_writer_.Write(result.saved_path, image, options.format);
+    if (!write_result) {
+        return common::Result<AutoSaveResult>::Failure(write_result.Error());
     }
 
-    if (!image_clipboard_writer_.CopyToClipboard(owner, image, error_message)) {
+    auto clipboard_result = image_clipboard_writer_.CopyToClipboard(owner, image);
+    if (!clipboard_result) {
         result.status = AutoSaveStatus::ClipboardFailed;
-        return result;
+        result.clipboard_error_message = clipboard_result.Error();
+        return common::Result<AutoSaveResult>::Success(std::move(result));
     }
 
     result.status = AutoSaveStatus::SavedAndCopied;
-    return result;
+    return common::Result<AutoSaveResult>::Success(std::move(result));
 }
 
 std::wstring AutoSaveService::BuildFileName(const SYSTEMTIME& local_time) const {

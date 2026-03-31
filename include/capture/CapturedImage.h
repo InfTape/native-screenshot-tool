@@ -5,9 +5,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
+
+#include "common/Result.h"
 
 namespace capture {
 
@@ -22,7 +23,7 @@ public:
     std::size_t RowStride() const;
     std::vector<std::uint8_t>& Pixels();
     const std::vector<std::uint8_t>& Pixels() const;
-    std::optional<CapturedImage> Crop(const RECT& region, std::wstring& error_message) const;
+    common::Result<CapturedImage> Crop(const RECT& region) const;
 
     BITMAPINFO CreateBitmapInfo() const;
 

@@ -6,7 +6,7 @@ namespace common {
 
 std::wstring GetLastErrorMessage(DWORD error_code) {
     if (error_code == 0) {
-        return L"未提供错误码。";
+        return L"系统未返回扩展错误信息。";
     }
 
     LPWSTR buffer = nullptr;
@@ -21,7 +21,7 @@ std::wstring GetLastErrorMessage(DWORD error_code) {
                                         nullptr);
 
     if (length == 0 || buffer == nullptr) {
-        return L"Win32 错误码: " + std::to_wstring(error_code);
+        return L"Win32 错误码 " + std::to_wstring(error_code);
     }
 
     std::wstring message(buffer, length);

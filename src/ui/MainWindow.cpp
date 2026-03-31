@@ -233,19 +233,18 @@ struct ScopedRegistryKey {
     HKEY key = nullptr;
 };
 
-std::optional<std::wstring> ResolveExecutablePath(std::wstring& error_message) {
+common::Result<std::wstring> ResolveExecutablePath() {
     std::vector<wchar_t> buffer(MAX_PATH);
     for (;;) {
         const DWORD copied =
             GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
         if (copied == 0) {
-            error_message = L"获取程序路径失败。\n\n" +
-                            common::GetLastErrorMessage(GetLastError());
-            return std::nullopt;
+            return common::Result<std::wstring>::Failure(
+                L"获取程序路径失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
         }
 
         if (copied < buffer.size() - 1) {
-            return std::wstring(buffer.data(), copied);
+            return common::Result<std::wstring>::Success(std::wstring(buffer.data(), copied));
         }
 
         buffer.resize(buffer.size() * 2);
@@ -529,9 +528,14 @@ bool MainWindow::CreateChildControls() {
 }
 
 bool MainWindow::InitializeHotkeySettings() {
-    std::wstring error_message;
-    if (!settings_repository_.Load(settings_, error_message)) {
-        MessageBoxW(window_, error_message.c_str(), L"读取设置失败", MB_OK | MB_ICONWARNING);
+    auto load_result = settings_repository_.Load();
+    if (load_result) {
+        settings_ = load_result.Value();
+    } else {
+        MessageBoxW(window_,
+                    load_result.Error().c_str(),
+                    L"读取设置失败",
+                    MB_OK | MB_ICONWARNING);
     }
 
     EnsureSaveDirectoryConfigured();
@@ -539,16 +543,21 @@ bool MainWindow::InitializeHotkeySettings() {
     UpdateStartupOptionDisplay();
     UpdateSaveButtonLabel();
 
-    std::wstring startup_error_message;
-    if (!SyncLaunchAtStartupSetting(settings_.launch_at_startup, startup_error_message)) {
+    auto startup_result = SyncLaunchAtStartupSetting(settings_.launch_at_startup);
+    if (!startup_result) {
         MessageBoxW(window_,
-                    startup_error_message.c_str(),
+                    startup_result.Error().c_str(),
                     L"同步开机启动失败",
                     MB_OK | MB_ICONWARNING);
     }
 
-    if (!RegisterConfiguredHotkeys(true)) {
+    auto hotkey_result = RegisterConfiguredHotkeys();
+    if (!hotkey_result) {
         UpdateStatus(L"部分快捷键注册失败，请重新设置未被占用的组合键。");
+        MessageBoxW(window_,
+                    (std::wstring(L"以下快捷键未能注册：\n\n") + hotkey_result.Error()).c_str(),
+                    L"快捷键注册失败",
+                    MB_OK | MB_ICONWARNING);
         return false;
     }
 
@@ -556,9 +565,12 @@ bool MainWindow::InitializeHotkeySettings() {
 }
 
 bool MainWindow::InitializeTrayIcon() {
-    std::wstring error_message;
-    if (!tray_icon_controller_.AddIcon(window_, kTrayIconMessage, error_message)) {
-        MessageBoxW(window_, error_message.c_str(), L"托盘初始化失败", MB_OK | MB_ICONWARNING);
+    auto add_icon_result = tray_icon_controller_.AddIcon(window_, kTrayIconMessage);
+    if (!add_icon_result) {
+        MessageBoxW(window_,
+                    add_icon_result.Error().c_str(),
+                    L"托盘初始化失败",
+                    MB_OK | MB_ICONWARNING);
         return false;
     }
 
@@ -566,35 +578,34 @@ bool MainWindow::InitializeTrayIcon() {
     return true;
 }
 
-bool MainWindow::SaveImageToConfiguredDirectory(const capture::CapturedImage& image,
-                                                std::wstring& saved_path,
-                                                std::wstring& error_message,
-                                                bool& clipboard_failed) const {
-    saved_path.clear();
-    error_message.clear();
-    clipboard_failed = false;
-
+common::Result<MainWindow::SaveImageOutcome> MainWindow::SaveImageToConfiguredDirectory(
+    const capture::CapturedImage& image) const {
     if (image.IsEmpty()) {
-        error_message = L"当前没有可保存的截图。";
-        return false;
+        return common::Result<SaveImageOutcome>::Failure(L"当前没有可保存的截图。");
     }
 
     capture::AutoSaveOptions options;
     options.directory = settings_.save_directory;
     options.format = settings_.save_format;
 
-    const auto result = auto_save_service_.SaveImage(window_, image, options, error_message);
-    saved_path = result.saved_path;
-    if (result.status == capture::AutoSaveStatus::SavedAndCopied) {
-        return true;
+    const auto result = auto_save_service_.SaveImage(window_, image, options);
+    if (!result) {
+        return common::Result<SaveImageOutcome>::Failure(result.Error());
     }
 
-    if (result.status == capture::AutoSaveStatus::ClipboardFailed) {
-        clipboard_failed = true;
-        return true;
+    SaveImageOutcome outcome{};
+    outcome.saved_path = result.Value().saved_path;
+    if (result.Value().status == capture::AutoSaveStatus::SavedAndCopied) {
+        return common::Result<SaveImageOutcome>::Success(std::move(outcome));
     }
 
-    return false;
+    if (result.Value().status == capture::AutoSaveStatus::ClipboardFailed) {
+        outcome.clipboard_failed = true;
+        outcome.clipboard_error_message = result.Value().clipboard_error_message;
+        return common::Result<SaveImageOutcome>::Success(std::move(outcome));
+    }
+
+    return common::Result<SaveImageOutcome>::Failure(L"保存截图失败。");
 }
 
 void MainWindow::UpdateSaveSettingsDisplay() const {
@@ -627,18 +638,14 @@ void MainWindow::UpdateSaveButtonLabel() const {
     }
 }
 
-bool MainWindow::ResolveDefaultSaveDirectory(std::wstring& directory,
-                                             std::wstring& error_message) const {
-    directory.clear();
-    error_message.clear();
-
+common::Result<std::wstring> MainWindow::ResolveDefaultSaveDirectory() const {
     PWSTR known_folder_path = nullptr;
     HRESULT hr = SHGetKnownFolderPath(FOLDERID_Pictures, KF_FLAG_DEFAULT, nullptr, &known_folder_path);
     if (SUCCEEDED(hr) && known_folder_path != nullptr) {
         std::filesystem::path pictures_path(known_folder_path);
         CoTaskMemFree(known_folder_path);
-        directory = (pictures_path / L"NativeScreenshot").wstring();
-        return true;
+        return common::Result<std::wstring>::Success(
+            (pictures_path / L"NativeScreenshot").wstring());
     }
 
     if (known_folder_path != nullptr) {
@@ -649,13 +656,12 @@ bool MainWindow::ResolveDefaultSaveDirectory(std::wstring& directory,
     if (required_size > 0) {
         std::vector<wchar_t> buffer(required_size);
         if (GetEnvironmentVariableW(L"LOCALAPPDATA", buffer.data(), required_size) > 0) {
-            directory = (std::filesystem::path(buffer.data()) / L"NativeScreenshot" / L"Captures").wstring();
-            return true;
+            return common::Result<std::wstring>::Success(
+                (std::filesystem::path(buffer.data()) / L"NativeScreenshot" / L"Captures").wstring());
         }
     }
 
-    error_message = L"无法解析默认保存目录。";
-    return false;
+    return common::Result<std::wstring>::Failure(L"无法解析默认保存目录。");
 }
 
 bool MainWindow::EnsureSaveDirectoryConfigured() {
@@ -663,16 +669,22 @@ bool MainWindow::EnsureSaveDirectoryConfigured() {
         return true;
     }
 
-    std::wstring default_directory;
-    std::wstring error_message;
-    if (!ResolveDefaultSaveDirectory(default_directory, error_message)) {
-        MessageBoxW(window_, error_message.c_str(), L"设置保存目录失败", MB_OK | MB_ICONWARNING);
+    auto default_directory_result = ResolveDefaultSaveDirectory();
+    if (!default_directory_result) {
+        MessageBoxW(window_,
+                    default_directory_result.Error().c_str(),
+                    L"设置保存目录失败",
+                    MB_OK | MB_ICONWARNING);
         return false;
     }
 
-    settings_.save_directory = default_directory;
-    if (!settings_repository_.Save(settings_, error_message)) {
-        MessageBoxW(window_, error_message.c_str(), L"保存设置失败", MB_OK | MB_ICONWARNING);
+    settings_.save_directory = default_directory_result.Value();
+    auto save_result = settings_repository_.Save(settings_);
+    if (!save_result) {
+        MessageBoxW(window_,
+                    save_result.Error().c_str(),
+                    L"保存设置失败",
+                    MB_OK | MB_ICONWARNING);
     }
     return true;
 }
@@ -756,11 +768,14 @@ void MainWindow::ApplySaveFormatSelection() {
     const auto previous_format = settings_.save_format;
     settings_.save_format = new_format;
 
-    std::wstring error_message;
-    if (!settings_repository_.Save(settings_, error_message)) {
+    auto save_result = settings_repository_.Save(settings_);
+    if (!save_result) {
         settings_.save_format = previous_format;
         UpdateSaveSettingsDisplay();
-        MessageBoxW(window_, error_message.c_str(), L"保存设置失败", MB_OK | MB_ICONWARNING);
+        MessageBoxW(window_,
+                    save_result.Error().c_str(),
+                    L"保存设置失败",
+                    MB_OK | MB_ICONWARNING);
         return;
     }
 
@@ -769,13 +784,11 @@ void MainWindow::ApplySaveFormatSelection() {
     UpdateStatus(std::wstring(L"默认保存格式已切换为 ") + FormatDisplayName(settings_.save_format) + L"。");
 }
 
-bool MainWindow::SyncLaunchAtStartupSetting(bool enabled, std::wstring& error_message) const {
-    error_message.clear();
-
+common::Result<void> MainWindow::SyncLaunchAtStartupSetting(bool enabled) const {
     if (enabled) {
-        const auto executable_path = ResolveExecutablePath(error_message);
-        if (!executable_path.has_value()) {
-            return false;
+        auto executable_path = ResolveExecutablePath();
+        if (!executable_path) {
+            return common::Result<void>::Failure(executable_path.Error());
         }
 
         ScopedRegistryKey registry_key;
@@ -789,12 +802,12 @@ bool MainWindow::SyncLaunchAtStartupSetting(bool enabled, std::wstring& error_me
                                       &registry_key.key,
                                       nullptr);
         if (result != ERROR_SUCCESS) {
-            error_message = L"写入开机启动注册表失败。\n\n" +
-                            common::GetLastErrorMessage(static_cast<DWORD>(result));
-            return false;
+            return common::Result<void>::Failure(
+                L"写入开机启动注册表失败。\n\n" +
+                common::GetLastErrorMessage(static_cast<DWORD>(result)));
         }
 
-        const std::wstring command_line = BuildStartupCommandLine(*executable_path);
+        const std::wstring command_line = BuildStartupCommandLine(executable_path.Value());
         result = RegSetValueExW(
             registry_key.key,
             kStartupValueName,
@@ -803,39 +816,39 @@ bool MainWindow::SyncLaunchAtStartupSetting(bool enabled, std::wstring& error_me
             reinterpret_cast<const BYTE*>(command_line.c_str()),
             static_cast<DWORD>((command_line.size() + 1) * sizeof(wchar_t)));
         if (result != ERROR_SUCCESS) {
-            error_message = L"写入开机启动注册表失败。\n\n" +
-                            common::GetLastErrorMessage(static_cast<DWORD>(result));
-            return false;
+            return common::Result<void>::Failure(
+                L"写入开机启动注册表失败。\n\n" +
+                common::GetLastErrorMessage(static_cast<DWORD>(result)));
         }
 
-        return true;
+        return common::Result<void>::Success();
     }
 
     ScopedRegistryKey registry_key;
     LONG result =
         RegOpenKeyExW(HKEY_CURRENT_USER, kStartupRegistryPath, 0, KEY_SET_VALUE, &registry_key.key);
     if (result == ERROR_FILE_NOT_FOUND) {
-        return true;
+        return common::Result<void>::Success();
     }
 
     if (result != ERROR_SUCCESS) {
-        error_message = L"删除开机启动注册表失败。\n\n" +
-                        common::GetLastErrorMessage(static_cast<DWORD>(result));
-        return false;
+        return common::Result<void>::Failure(
+            L"删除开机启动注册表失败。\n\n" +
+            common::GetLastErrorMessage(static_cast<DWORD>(result)));
     }
 
     result = RegDeleteValueW(registry_key.key, kStartupValueName);
     if (result == ERROR_FILE_NOT_FOUND) {
-        return true;
+        return common::Result<void>::Success();
     }
 
     if (result != ERROR_SUCCESS) {
-        error_message = L"删除开机启动注册表失败。\n\n" +
-                        common::GetLastErrorMessage(static_cast<DWORD>(result));
-        return false;
+        return common::Result<void>::Failure(
+            L"删除开机启动注册表失败。\n\n" +
+            common::GetLastErrorMessage(static_cast<DWORD>(result)));
     }
 
-    return true;
+    return common::Result<void>::Success();
 }
 
 void MainWindow::ToggleLaunchAtStartup() {
@@ -850,21 +863,26 @@ void MainWindow::ToggleLaunchAtStartup() {
         return;
     }
 
-    std::wstring error_message;
-    if (!SyncLaunchAtStartupSetting(new_enabled, error_message)) {
+    auto sync_result = SyncLaunchAtStartupSetting(new_enabled);
+    if (!sync_result) {
         UpdateStartupOptionDisplay();
-        MessageBoxW(window_, error_message.c_str(), L"更新开机启动失败", MB_OK | MB_ICONWARNING);
+        MessageBoxW(window_,
+                    sync_result.Error().c_str(),
+                    L"更新开机启动失败",
+                    MB_OK | MB_ICONWARNING);
         return;
     }
 
     settings_.launch_at_startup = new_enabled;
-    if (!settings_repository_.Save(settings_, error_message)) {
+    auto save_result = settings_repository_.Save(settings_);
+    if (!save_result) {
         settings_.launch_at_startup = previous_enabled;
         UpdateStartupOptionDisplay();
 
-        std::wstring rollback_error_message;
-        if (!SyncLaunchAtStartupSetting(previous_enabled, rollback_error_message)) {
-            error_message += L"\n\n恢复注册表状态失败：\n" + rollback_error_message;
+        std::wstring error_message = save_result.Error();
+        auto rollback_result = SyncLaunchAtStartupSetting(previous_enabled);
+        if (!rollback_result) {
+            error_message += L"\n\n恢复注册表状态失败：\n" + rollback_result.Error();
         }
 
         MessageBoxW(window_, error_message.c_str(), L"保存设置失败", MB_OK | MB_ICONWARNING);
@@ -978,9 +996,38 @@ void MainWindow::UpdateActionState() const {
     EnableWindow(clear_button_, has_image);
 }
 
-std::optional<capture::DesktopSnapshot> MainWindow::CaptureSnapshot(
-    std::wstring& error_message) const {
-    return capture_service_.CaptureDesktopSnapshot(error_message);
+common::Result<capture::DesktopSnapshot> MainWindow::CaptureSnapshot() const {
+    return capture_service_.CaptureDesktopSnapshot();
+}
+
+bool MainWindow::FinalizeCapturedImage(const std::wstring& capture_name) {
+    UpdateHotkeyLabels();
+    UpdateActionState();
+
+    auto save_result = SaveImageToConfiguredDirectory(image_);
+    if (!save_result) {
+        UpdateStatus(capture_name + L"完成，但自动保存失败。");
+        MessageBoxW(window_, save_result.Error().c_str(), L"保存失败", MB_OK | MB_ICONERROR);
+        return true;
+    }
+
+    const SaveImageOutcome& outcome = save_result.Value();
+    if (outcome.clipboard_failed) {
+        UpdateStatus(capture_name + L"已自动保存到：" + outcome.saved_path + L"，但复制到剪贴板失败。");
+        image_ = capture::CapturedImage{};
+        UpdateActionState();
+        MessageBoxW(window_,
+                    outcome.clipboard_error_message.c_str(),
+                    L"复制到剪贴板失败",
+                    MB_OK | MB_ICONWARNING);
+        return true;
+    }
+
+    UpdateStatus(capture_name + L"已自动保存为 " + FormatDisplayName(settings_.save_format) +
+                 L"，并复制到剪贴板：" + outcome.saved_path);
+    image_ = capture::CapturedImage{};
+    UpdateActionState();
+    return true;
 }
 
 bool MainWindow::CaptureDesktop() {
@@ -990,47 +1037,19 @@ bool MainWindow::CaptureDesktop() {
 
     if (recording_hotkey_slot_ != HotkeySlot::None) {
         recording_hotkey_slot_ = HotkeySlot::None;
-        RegisterConfiguredHotkeys(false);
+        RegisterConfiguredHotkeys();
     }
 
     ScopedBooleanReset capturing(capture_in_progress_);
-    std::wstring error_message;
-    auto snapshot = CaptureSnapshot(error_message);
-    if (!snapshot.has_value()) {
+    auto snapshot = CaptureSnapshot();
+    if (!snapshot) {
         UpdateStatus(L"全屏截图失败。");
-        MessageBoxW(window_, error_message.c_str(), L"截图失败", MB_OK | MB_ICONERROR);
+        MessageBoxW(window_, snapshot.Error().c_str(), L"截图失败", MB_OK | MB_ICONERROR);
         return false;
     }
 
-    image_ = std::move(snapshot->image);
-    UpdateHotkeyLabels();
-    UpdateActionState();
-
-    std::wstring save_error_message;
-    std::wstring saved_path;
-    bool clipboard_failed = false;
-    if (!SaveImageToConfiguredDirectory(image_, saved_path, save_error_message, clipboard_failed)) {
-        UpdateStatus(L"全屏截图完成，但自动保存失败。");
-        MessageBoxW(window_, save_error_message.c_str(), L"保存失败", MB_OK | MB_ICONERROR);
-        return true;
-    }
-
-    if (clipboard_failed) {
-        UpdateStatus(L"全屏截图已自动保存到：" + saved_path + L"，但复制到剪贴板失败。");
-        image_ = capture::CapturedImage{};
-        UpdateActionState();
-        MessageBoxW(window_,
-                    save_error_message.c_str(),
-                    L"复制到剪贴板失败",
-                    MB_OK | MB_ICONWARNING);
-        return true;
-    }
-
-    UpdateStatus(std::wstring(L"全屏截图已自动保存为 ") +
-                 FormatDisplayName(settings_.save_format) + L"，并复制到剪贴板：" + saved_path);
-    image_ = capture::CapturedImage{};
-    UpdateActionState();
-    return true;
+    image_ = std::move(snapshot.Value().image);
+    return FinalizeCapturedImage(L"全屏截图");
 }
 
 bool MainWindow::CaptureRegion() {
@@ -1040,59 +1059,31 @@ bool MainWindow::CaptureRegion() {
 
     if (recording_hotkey_slot_ != HotkeySlot::None) {
         recording_hotkey_slot_ = HotkeySlot::None;
-        RegisterConfiguredHotkeys(false);
+        RegisterConfiguredHotkeys();
     }
 
     ScopedBooleanReset capturing(capture_in_progress_);
-    std::wstring error_message;
-    auto snapshot = CaptureSnapshot(error_message);
-    if (!snapshot.has_value()) {
+    auto snapshot = CaptureSnapshot();
+    if (!snapshot) {
         UpdateStatus(L"选区截图失败。");
-        MessageBoxW(window_, error_message.c_str(), L"截图失败", MB_OK | MB_ICONERROR);
+        MessageBoxW(window_, snapshot.Error().c_str(), L"截图失败", MB_OK | MB_ICONERROR);
         return false;
     }
 
-    auto selected_result = region_selection_overlay_.SelectRegion(*snapshot, error_message);
-    if (!selected_result.has_value()) {
-        if (!error_message.empty()) {
-            UpdateStatus(L"选区截图失败。");
-            MessageBoxW(window_, error_message.c_str(), L"选区失败", MB_OK | MB_ICONERROR);
-        } else {
-            UpdateStatus(L"已取消选区截图。");
-        }
+    auto selected_result = region_selection_overlay_.SelectRegion(snapshot.Value());
+    if (!selected_result) {
+        UpdateStatus(L"选区截图失败。");
+        MessageBoxW(window_, selected_result.Error().c_str(), L"选区失败", MB_OK | MB_ICONERROR);
         return false;
     }
 
-    image_ = std::move(selected_result->image);
-    UpdateHotkeyLabels();
-    UpdateActionState();
-
-    std::wstring save_error_message;
-    std::wstring saved_path;
-    bool clipboard_failed = false;
-    if (!SaveImageToConfiguredDirectory(image_, saved_path, save_error_message, clipboard_failed)) {
-        UpdateStatus(L"选区截图完成，但自动保存失败。");
-        MessageBoxW(window_, save_error_message.c_str(), L"保存失败", MB_OK | MB_ICONERROR);
-        return true;
+    if (!selected_result.Value().has_value()) {
+        UpdateStatus(L"已取消选区截图。");
+        return false;
     }
 
-    if (clipboard_failed) {
-        UpdateStatus(L"选区截图已自动保存到：" + saved_path + L"，但复制到剪贴板失败。");
-        image_ = capture::CapturedImage{};
-        UpdateActionState();
-        MessageBoxW(window_,
-                    save_error_message.c_str(),
-                    L"复制到剪贴板失败",
-                    MB_OK | MB_ICONWARNING);
-        return true;
-    }
-
-    UpdateStatus(std::wstring(L"选区截图已自动保存为 ") +
-                 FormatDisplayName(settings_.save_format) + L"，并复制到剪贴板：" + saved_path);
-    image_ = capture::CapturedImage{};
-    UpdateActionState();
-
-    return true;
+    image_ = std::move(selected_result.Value()->image);
+    return FinalizeCapturedImage(L"选区截图");
 }
 
 bool MainWindow::CaptureWindow() {
@@ -1102,83 +1093,59 @@ bool MainWindow::CaptureWindow() {
 
     if (recording_hotkey_slot_ != HotkeySlot::None) {
         recording_hotkey_slot_ = HotkeySlot::None;
-        RegisterConfiguredHotkeys(false);
+        RegisterConfiguredHotkeys();
     }
 
     ScopedBooleanReset capturing(capture_in_progress_);
-    std::wstring error_message;
-    auto snapshot = CaptureSnapshot(error_message);
-    if (!snapshot.has_value()) {
+    auto snapshot = CaptureSnapshot();
+    if (!snapshot) {
         UpdateStatus(L"窗口截图失败。");
-        MessageBoxW(window_, error_message.c_str(), L"截图失败", MB_OK | MB_ICONERROR);
+        MessageBoxW(window_, snapshot.Error().c_str(), L"截图失败", MB_OK | MB_ICONERROR);
         return false;
     }
 
-    auto selected_window = window_selection_overlay_.SelectWindow(*snapshot, {}, error_message);
-    if (!selected_window.has_value()) {
-        if (!error_message.empty()) {
-            UpdateStatus(L"窗口截图失败。");
-            MessageBoxW(window_, error_message.c_str(), L"窗口选择失败", MB_OK | MB_ICONERROR);
-        } else {
-            UpdateStatus(L"已取消窗口截图。");
-        }
+    auto selected_window = window_selection_overlay_.SelectWindow(snapshot.Value(), {});
+    if (!selected_window) {
+        UpdateStatus(L"窗口截图失败。");
+        MessageBoxW(window_,
+                    selected_window.Error().c_str(),
+                    L"窗口选择失败",
+                    MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    if (!selected_window.Value().has_value()) {
+        UpdateStatus(L"已取消窗口截图。");
         return false;
     }
 
     auto captured_window =
-        window_capture_service_.CaptureWindow(*selected_window, &(*snapshot), error_message);
-    if (!captured_window.has_value()) {
+        window_capture_service_.CaptureWindow(*selected_window.Value(), &snapshot.Value());
+    if (!captured_window) {
         UpdateStatus(L"窗口截图失败。");
-        MessageBoxW(window_, error_message.c_str(), L"窗口采集失败", MB_OK | MB_ICONERROR);
+        MessageBoxW(window_, captured_window.Error().c_str(), L"窗口采集失败", MB_OK | MB_ICONERROR);
         return false;
     }
 
     capture::DesktopSnapshot editing_snapshot{};
-    editing_snapshot.origin_x = selected_window->bounds.left;
-    editing_snapshot.origin_y = selected_window->bounds.top;
-    editing_snapshot.image = std::move(*captured_window);
+    editing_snapshot.origin_x = selected_window.Value()->bounds.left;
+    editing_snapshot.origin_y = selected_window.Value()->bounds.top;
+    editing_snapshot.image = std::move(captured_window.Value());
 
-    std::wstring edit_error_message;
-    auto edited_result = region_selection_overlay_.EditImage(editing_snapshot, edit_error_message);
-    if (!edited_result.has_value()) {
-        if (!edit_error_message.empty()) {
-            UpdateStatus(L"窗口截图失败。");
-            MessageBoxW(window_, edit_error_message.c_str(), L"编辑失败", MB_OK | MB_ICONERROR);
-        } else {
-            UpdateStatus(L"已取消窗口截图。");
-        }
+    auto edited_result = region_selection_overlay_.EditImage(editing_snapshot);
+    if (!edited_result) {
+        UpdateStatus(L"窗口截图失败。");
+        MessageBoxW(window_, edited_result.Error().c_str(), L"编辑失败", MB_OK | MB_ICONERROR);
         return false;
     }
 
-    image_ = std::move(edited_result->image);
-    UpdateHotkeyLabels();
-    UpdateActionState();
-
-    std::wstring save_error_message;
-    std::wstring saved_path;
-    bool clipboard_failed = false;
-    if (!SaveImageToConfiguredDirectory(image_, saved_path, save_error_message, clipboard_failed)) {
-        UpdateStatus(L"窗口截图完成，但自动保存失败。");
-        MessageBoxW(window_, save_error_message.c_str(), L"保存失败", MB_OK | MB_ICONERROR);
-        return true;
+    if (!edited_result.Value().has_value()) {
+        UpdateStatus(L"已取消窗口截图。");
+        return false;
     }
 
-    if (clipboard_failed) {
-        UpdateStatus(L"窗口截图已自动保存到：" + saved_path + L"，但复制到剪贴板失败。");
-        image_ = capture::CapturedImage{};
-        UpdateActionState();
-        MessageBoxW(window_,
-                    save_error_message.c_str(),
-                    L"复制到剪贴板失败",
-                    MB_OK | MB_ICONWARNING);
-        return true;
-    }
-
-    UpdateStatus(std::wstring(L"窗口截图已自动保存为 ") +
-                 FormatDisplayName(settings_.save_format) + L"，并复制到剪贴板：" + saved_path);
-    image_ = capture::CapturedImage{};
-    UpdateActionState();
-    return true;
+    image_ = std::move(edited_result.Value()->image);
+    return FinalizeCapturedImage(L"窗口截图");
 }
 
 void MainWindow::SaveCapture() {
@@ -1186,22 +1153,24 @@ void MainWindow::SaveCapture() {
         return;
     }
 
-    std::wstring error_message;
-    std::wstring saved_path;
-    bool clipboard_failed = false;
-    if (!SaveImageToConfiguredDirectory(image_, saved_path, error_message, clipboard_failed)) {
-        MessageBoxW(window_, error_message.c_str(), L"保存失败", MB_OK | MB_ICONERROR);
+    auto save_result = SaveImageToConfiguredDirectory(image_);
+    if (!save_result) {
+        MessageBoxW(window_, save_result.Error().c_str(), L"保存失败", MB_OK | MB_ICONERROR);
         return;
     }
 
-    if (clipboard_failed) {
-        UpdateStatus(L"已保存到：" + saved_path + L"，但复制到剪贴板失败。");
-        MessageBoxW(window_, error_message.c_str(), L"复制到剪贴板失败", MB_OK | MB_ICONWARNING);
+    const SaveImageOutcome& outcome = save_result.Value();
+    if (outcome.clipboard_failed) {
+        UpdateStatus(L"已保存到：" + outcome.saved_path + L"，但复制到剪贴板失败。");
+        MessageBoxW(window_,
+                    outcome.clipboard_error_message.c_str(),
+                    L"复制到剪贴板失败",
+                    MB_OK | MB_ICONWARNING);
         return;
     }
 
     UpdateStatus(std::wstring(L"已保存为 ") + FormatDisplayName(settings_.save_format) +
-                 L"，并复制到剪贴板：" + saved_path);
+                 L"，并复制到剪贴板：" + outcome.saved_path);
 }
 
 void MainWindow::ClearCapture() {
@@ -1225,7 +1194,13 @@ void MainWindow::CancelHotkeyRecording() {
     }
 
     recording_hotkey_slot_ = HotkeySlot::None;
-    RegisterConfiguredHotkeys(true);
+    auto register_result = RegisterConfiguredHotkeys();
+    if (!register_result) {
+        MessageBoxW(window_,
+                    (std::wstring(L"以下快捷键未能注册：\n\n") + register_result.Error()).c_str(),
+                    L"快捷键注册失败",
+                    MB_OK | MB_ICONWARNING);
+    }
     UpdateStatus(L"已取消快捷键修改。");
 }
 
@@ -1284,71 +1259,67 @@ bool MainWindow::ApplyRecordedHotkey(HotkeySlot slot,
     AccessHotkeyDefinition(settings_, slot) = definition;
     recording_hotkey_slot_ = HotkeySlot::None;
 
-    std::wstring error_summary;
-    if (!RegisterConfiguredHotkeys(false, &error_summary)) {
+    auto register_result = RegisterConfiguredHotkeys();
+    if (!register_result) {
         settings_ = previous_settings;
-        RegisterConfiguredHotkeys(false);
+        auto rollback_result = RegisterConfiguredHotkeys();
         UpdateStatus(std::wstring(L"新的") + GetCaptureModeName(slot) +
                      L"快捷键注册失败，已恢复原设置。");
+        std::wstring message = std::wstring(L"无法注册新的") + GetCaptureModeName(slot) +
+                               L"快捷键，可能已被其他程序占用。\n\n" + register_result.Error();
+        if (!rollback_result) {
+            message += L"\n\n恢复原设置后仍有以下快捷键未能注册：\n\n" + rollback_result.Error();
+        }
         MessageBoxW(window_,
-                    (std::wstring(L"无法注册新的") + GetCaptureModeName(slot) +
-                     L"快捷键，可能已被其他程序占用。\n\n" + error_summary)
-                        .c_str(),
+                    message.c_str(),
                     L"快捷键注册失败",
                     MB_OK | MB_ICONWARNING);
         return false;
     }
 
-    std::wstring error_message;
-    if (!settings_repository_.Save(settings_, error_message)) {
-        MessageBoxW(window_, error_message.c_str(), L"保存设置失败", MB_OK | MB_ICONWARNING);
+    auto save_result = settings_repository_.Save(settings_);
+    if (!save_result) {
+        MessageBoxW(window_,
+                    save_result.Error().c_str(),
+                    L"保存设置失败",
+                    MB_OK | MB_ICONWARNING);
     }
 
     return true;
 }
 
-bool MainWindow::RegisterConfiguredHotkeys(bool show_error_messages,
-                                           std::wstring* error_summary) {
+common::Result<void> MainWindow::RegisterConfiguredHotkeys() {
     UnregisterAllHotkeys();
 
-    bool all_registered = true;
     std::vector<std::wstring> failed_messages;
     for (const HotkeySlot slot : kConfigurableHotkeySlots) {
-        std::wstring error_message;
-        if (hotkey_manager_.RegisterHotkey(window_,
-                                           GetHotkeyIdentifier(slot),
-                                           AccessHotkeyDefinition(settings_, slot),
-                                           error_message)) {
+        auto register_result = hotkey_manager_.RegisterHotkey(
+            window_, GetHotkeyIdentifier(slot), AccessHotkeyDefinition(settings_, slot));
+        if (register_result) {
             hotkey_registered_[HotkeySlotIndex(slot)] = true;
             continue;
         }
 
-        all_registered = false;
         hotkey_registered_[HotkeySlotIndex(slot)] = false;
-        failed_messages.push_back(std::wstring(GetCaptureModeName(slot)) + L"：" + error_message);
+        failed_messages.push_back(std::wstring(GetCaptureModeName(slot)) + L"：" +
+                                  register_result.Error());
     }
 
     UpdateHotkeyLabels();
 
-    if (error_summary != nullptr) {
-        error_summary->clear();
-        for (std::size_t index = 0; index < failed_messages.size(); ++index) {
-            if (index > 0) {
-                *error_summary += L"\n";
-            }
-            *error_summary += failed_messages[index];
-        }
+    if (failed_messages.empty()) {
+        return common::Result<void>::Success();
     }
 
-    if (!all_registered && show_error_messages) {
-        std::wstring message = L"以下快捷键未能注册：\n\n";
-        for (const auto& failed_message : failed_messages) {
-            message += L"- " + failed_message + L"\n";
+    std::wstring error_summary;
+    for (std::size_t index = 0; index < failed_messages.size(); ++index) {
+        if (index > 0) {
+            error_summary += L"\n";
         }
-        MessageBoxW(window_, message.c_str(), L"快捷键注册失败", MB_OK | MB_ICONWARNING);
+        error_summary += failed_messages[index];
     }
 
-    return all_registered;
+    return common::Result<void>::Failure(std::move(error_summary));
 }
 
 void MainWindow::UnregisterAllHotkeys() {
@@ -1509,10 +1480,13 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
             const std::wstring previous_directory = settings_.save_directory;
             settings_.save_directory = selected_directory;
 
-            std::wstring error_message;
-            if (!settings_repository_.Save(settings_, error_message)) {
+            auto save_result = settings_repository_.Save(settings_);
+            if (!save_result) {
                 settings_.save_directory = previous_directory;
-                MessageBoxW(window_, error_message.c_str(), L"保存设置失败", MB_OK | MB_ICONWARNING);
+                MessageBoxW(window_,
+                            save_result.Error().c_str(),
+                            L"保存设置失败",
+                            MB_OK | MB_ICONWARNING);
                 return 0;
             }
 
@@ -1576,8 +1550,10 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
     }
 
     if (taskbar_created_message_ != 0 && message == taskbar_created_message_) {
-        std::wstring error_message;
-        tray_icon_controller_.ReAddIcon(window_, kTrayIconMessage, error_message);
+        auto readd_result = tray_icon_controller_.ReAddIcon(window_, kTrayIconMessage);
+        if (!readd_result) {
+            UpdateStatus(L"托盘图标恢复失败。");
+        }
         return 0;
     }
 

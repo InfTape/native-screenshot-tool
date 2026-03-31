@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 
+#include "common/GdiResources.h"
 #include "common/RectUtils.h"
 #include "common/Win32Error.h"
 
@@ -12,87 +13,53 @@ namespace {
 
 constexpr UINT kPrintWindowRenderFullContent = 0x00000002;
 
-struct ScreenDcHandle {
-    HDC value = nullptr;
-
-    ~ScreenDcHandle() {
-        if (value != nullptr) {
-            ReleaseDC(nullptr, value);
-        }
-    }
-};
-
-struct MemoryDcHandle {
-    HDC value = nullptr;
-
-    ~MemoryDcHandle() {
-        if (value != nullptr) {
-            DeleteDC(value);
-        }
-    }
-};
-
-struct BitmapHandle {
-    HBITMAP value = nullptr;
-
-    ~BitmapHandle() {
-        if (value != nullptr) {
-            DeleteObject(value);
-        }
-    }
-};
-
 }  // namespace
 
 namespace capture {
 
-std::optional<CapturedImage> WindowCaptureService::CaptureWindow(
+common::Result<CapturedImage> WindowCaptureService::CaptureWindow(
     const WindowInfo& window,
-    const DesktopSnapshot* fallback_snapshot,
-    std::wstring& error_message) const {
-    std::wstring print_window_error;
-    auto captured = CaptureWithPrintWindow(window, print_window_error);
-    if (captured.has_value()) {
-        return captured;
+    const DesktopSnapshot* fallback_snapshot) const {
+    auto print_window_result = CaptureWithPrintWindow(window);
+    if (print_window_result) {
+        return print_window_result;
     }
 
-    if (fallback_snapshot != nullptr) {
-        auto fallback = CaptureFromSnapshot(window, *fallback_snapshot, error_message);
-        if (fallback.has_value()) {
-            return fallback;
-        }
-
-        error_message = L"窗口采集失败。\n\nPrintWindow 错误：\n" + print_window_error +
-                        L"\n\n回退到桌面裁剪也失败：\n" + error_message;
-        return std::nullopt;
+    if (fallback_snapshot == nullptr) {
+        return print_window_result;
     }
 
-    error_message = print_window_error;
-    return std::nullopt;
+    auto snapshot_result = CaptureFromSnapshot(window, *fallback_snapshot);
+    if (snapshot_result) {
+        return snapshot_result;
+    }
+
+    return common::Result<CapturedImage>::Failure(L"窗口采集失败。\n\nPrintWindow 错误：\n" +
+                                                  print_window_result.Error() +
+                                                  L"\n\n回退到桌面裁剪也失败：\n" +
+                                                  snapshot_result.Error());
 }
 
-std::optional<CapturedImage> WindowCaptureService::CaptureWithPrintWindow(
-    const WindowInfo& window,
-    std::wstring& error_message) const {
+common::Result<CapturedImage> WindowCaptureService::CaptureWithPrintWindow(
+    const WindowInfo& window) const {
     const RECT capture_bounds =
         common::HasArea(window.window_rect) ? window.window_rect : window.bounds;
     const int width = common::RectWidth(capture_bounds);
     const int height = common::RectHeight(capture_bounds);
     if (width <= 0 || height <= 0) {
-        error_message = L"目标窗口尺寸无效。";
-        return std::nullopt;
+        return common::Result<CapturedImage>::Failure(L"目标窗口尺寸无效。");
     }
 
-    ScreenDcHandle screen_dc{GetDC(nullptr)};
-    if (screen_dc.value == nullptr) {
-        error_message = L"获取屏幕 DC 失败。\n\n" + common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+    common::WindowDcHandle screen_dc(nullptr, GetDC(nullptr));
+    if (!screen_dc) {
+        return common::Result<CapturedImage>::Failure(
+            L"获取屏幕 DC 失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
-    MemoryDcHandle memory_dc{CreateCompatibleDC(screen_dc.value)};
-    if (memory_dc.value == nullptr) {
-        error_message = L"创建窗口截图 DC 失败。\n\n" + common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+    common::UniqueDc memory_dc{CreateCompatibleDC(screen_dc.Get())};
+    if (!memory_dc) {
+        return common::Result<CapturedImage>::Failure(
+            L"创建窗口截图 DC 失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
     BITMAPINFO bitmap_info{};
@@ -104,32 +71,27 @@ std::optional<CapturedImage> WindowCaptureService::CaptureWithPrintWindow(
     bitmap_info.bmiHeader.biCompression = BI_RGB;
 
     void* raw_pixels = nullptr;
-    BitmapHandle bitmap{
-        CreateDIBSection(screen_dc.value, &bitmap_info, DIB_RGB_COLORS, &raw_pixels, nullptr, 0)};
-    if (bitmap.value == nullptr || raw_pixels == nullptr) {
-        error_message = L"创建窗口截图缓冲区失败。\n\n" +
-                        common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+    common::UniqueBitmap bitmap{
+        CreateDIBSection(screen_dc.Get(), &bitmap_info, DIB_RGB_COLORS, &raw_pixels, nullptr, 0)};
+    if (!bitmap || raw_pixels == nullptr) {
+        return common::Result<CapturedImage>::Failure(
+            L"创建窗口截图缓冲区失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
-    const HGDIOBJ previous_object = SelectObject(memory_dc.value, bitmap.value);
-    if (previous_object == nullptr || previous_object == HGDI_ERROR) {
-        error_message = L"选择窗口截图位图失败。\n\n" +
-                        common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+    common::ScopedSelectObject selected_bitmap(memory_dc.Get(), bitmap.Get());
+    if (!selected_bitmap.IsValid()) {
+        return common::Result<CapturedImage>::Failure(
+            L"选择窗口截图位图失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
     RECT fill_rect{0, 0, width, height};
-    FillRect(memory_dc.value, &fill_rect, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    FillRect(memory_dc.Get(), &fill_rect, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
 
     const BOOL printed =
-        PrintWindow(window.handle, memory_dc.value, kPrintWindowRenderFullContent);
-    SelectObject(memory_dc.value, previous_object);
-
+        PrintWindow(window.handle, memory_dc.Get(), kPrintWindowRenderFullContent);
     if (!printed) {
-        error_message = L"PrintWindow 调用失败。\n\n" +
-                        common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+        return common::Result<CapturedImage>::Failure(
+            L"PrintWindow 调用失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
     const std::size_t pixel_bytes =
@@ -142,23 +104,27 @@ std::optional<CapturedImage> WindowCaptureService::CaptureWithPrintWindow(
     RECT visible_bounds = window.bounds;
     OffsetRect(&visible_bounds, -capture_bounds.left, -capture_bounds.top);
 
-    std::wstring crop_error_message;
-    auto cropped_image = captured_image.Crop(visible_bounds, crop_error_message);
-    if (!cropped_image.has_value()) {
-        error_message = L"PrintWindow 鎴浘鍚庤鍓彲瑙佸尯鍩熷け璐ャ€俓n\n" + crop_error_message;
-        return std::nullopt;
+    auto cropped_image = captured_image.Crop(visible_bounds);
+    if (!cropped_image) {
+        return common::Result<CapturedImage>::Failure(L"PrintWindow 结果裁剪失败。\n\n" +
+                                                      cropped_image.Error());
     }
 
-    return cropped_image;
+    return common::Result<CapturedImage>::Success(std::move(cropped_image.Value()));
 }
 
-std::optional<CapturedImage> WindowCaptureService::CaptureFromSnapshot(
+common::Result<CapturedImage> WindowCaptureService::CaptureFromSnapshot(
     const WindowInfo& window,
-    const DesktopSnapshot& snapshot,
-    std::wstring& error_message) const {
+    const DesktopSnapshot& snapshot) const {
     RECT relative_bounds = window.bounds;
     OffsetRect(&relative_bounds, -snapshot.origin_x, -snapshot.origin_y);
-    return snapshot.image.Crop(relative_bounds, error_message);
+
+    auto cropped_image = snapshot.image.Crop(relative_bounds);
+    if (!cropped_image) {
+        return common::Result<CapturedImage>::Failure(cropped_image.Error());
+    }
+
+    return common::Result<CapturedImage>::Success(std::move(cropped_image.Value()));
 }
 
 }  // namespace capture

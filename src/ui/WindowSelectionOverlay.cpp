@@ -8,61 +8,12 @@
 
 #include "common/RectUtils.h"
 #include "common/Win32Error.h"
+#include "ui/OverlayPrimitives.h"
 
 namespace {
 
-constexpr BYTE kOverlayAlpha = 120;
 constexpr int kInstructionHeight = 56;
 constexpr int kInstructionMargin = 16;
-
-void AlphaFillRect(HDC hdc, const RECT& rect, BYTE alpha) {
-    if (!common::HasArea(rect)) {
-        return;
-    }
-
-    BITMAPINFO bitmap_info{};
-    bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmap_info.bmiHeader.biWidth = 1;
-    bitmap_info.bmiHeader.biHeight = -1;
-    bitmap_info.bmiHeader.biPlanes = 1;
-    bitmap_info.bmiHeader.biBitCount = 32;
-    bitmap_info.bmiHeader.biCompression = BI_RGB;
-
-    void* bits = nullptr;
-    HBITMAP bitmap = CreateDIBSection(hdc, &bitmap_info, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (bitmap == nullptr || bits == nullptr) {
-        return;
-    }
-
-    *static_cast<DWORD*>(bits) = 0x00000000;
-
-    HDC memory_dc = CreateCompatibleDC(hdc);
-    if (memory_dc == nullptr) {
-        DeleteObject(bitmap);
-        return;
-    }
-
-    const HGDIOBJ previous = SelectObject(memory_dc, bitmap);
-    BLENDFUNCTION blend{};
-    blend.BlendOp = AC_SRC_OVER;
-    blend.SourceConstantAlpha = alpha;
-
-    AlphaBlend(hdc,
-               rect.left,
-               rect.top,
-               common::RectWidth(rect),
-               common::RectHeight(rect),
-               memory_dc,
-               0,
-               0,
-               1,
-               1,
-               blend);
-
-    SelectObject(memory_dc, previous);
-    DeleteDC(memory_dc);
-    DeleteObject(bitmap);
-}
 
 bool SameHoveredWindow(const std::optional<capture::WindowInfo>& left,
                        const std::optional<capture::WindowInfo>& right) {
@@ -83,20 +34,18 @@ namespace ui {
 
 WindowSelectionOverlay::WindowSelectionOverlay(HINSTANCE instance) : instance_(instance) {}
 
-std::optional<capture::WindowInfo> WindowSelectionOverlay::SelectWindow(
+common::Result<std::optional<capture::WindowInfo>> WindowSelectionOverlay::SelectWindow(
     const capture::DesktopSnapshot& snapshot,
-    const std::vector<HWND>& excluded_windows,
-    std::wstring& error_message) {
+    const std::vector<HWND>& excluded_windows) {
     snapshot_ = &snapshot;
     excluded_windows_ = excluded_windows;
     hovered_window_.reset();
     finished_ = false;
     accepted_ = false;
 
-    if (!RegisterWindowClass()) {
-        error_message = L"注册窗口选择遮罩层失败。\n\n" +
-                        common::GetLastErrorMessage(GetLastError());
-        return std::nullopt;
+    auto register_result = RegisterWindowClass();
+    if (!register_result) {
+        return common::Result<std::optional<capture::WindowInfo>>::Failure(register_result.Error());
     }
 
     window_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -113,11 +62,10 @@ std::optional<capture::WindowInfo> WindowSelectionOverlay::SelectWindow(
                               this);
 
     if (window_ == nullptr) {
-        error_message = L"创建窗口选择遮罩层失败。\n\n" +
-                        common::GetLastErrorMessage(GetLastError());
         snapshot_ = nullptr;
         excluded_windows_.clear();
-        return std::nullopt;
+        return common::Result<std::optional<capture::WindowInfo>>::Failure(
+            L"创建窗口选择遮罩层失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
     }
 
     excluded_windows_.push_back(window_);
@@ -127,12 +75,13 @@ std::optional<capture::WindowInfo> WindowSelectionOverlay::SelectWindow(
     SetForegroundWindow(window_);
     SetFocus(window_);
 
+    common::Result<void> loop_result = common::Result<void>::Success();
     MSG message{};
     while (!finished_) {
         const BOOL result = GetMessageW(&message, nullptr, 0, 0);
         if (result == -1) {
-            error_message = L"窗口选择消息循环失败。\n\n" +
-                            common::GetLastErrorMessage(GetLastError());
+            loop_result = common::Result<void>::Failure(
+                L"窗口选择消息循环失败。\n\n" + common::GetLastErrorMessage(GetLastError()));
             break;
         }
 
@@ -145,9 +94,9 @@ std::optional<capture::WindowInfo> WindowSelectionOverlay::SelectWindow(
         DispatchMessageW(&message);
     }
 
-    std::optional<capture::WindowInfo> result;
+    std::optional<capture::WindowInfo> selection;
     if (accepted_ && hovered_window_.has_value()) {
-        result = hovered_window_;
+        selection = hovered_window_;
     }
 
     if (window_ != nullptr) {
@@ -158,10 +107,15 @@ std::optional<capture::WindowInfo> WindowSelectionOverlay::SelectWindow(
     snapshot_ = nullptr;
     excluded_windows_.clear();
     hovered_window_.reset();
-    return result;
+
+    if (!loop_result) {
+        return common::Result<std::optional<capture::WindowInfo>>::Failure(loop_result.Error());
+    }
+
+    return common::Result<std::optional<capture::WindowInfo>>::Success(std::move(selection));
 }
 
-bool WindowSelectionOverlay::RegisterWindowClass() const {
+common::Result<void> WindowSelectionOverlay::RegisterWindowClass() const {
     WNDCLASSEXW window_class{};
     window_class.cbSize = sizeof(window_class);
     window_class.style = CS_HREDRAW | CS_VREDRAW;
@@ -174,12 +128,12 @@ bool WindowSelectionOverlay::RegisterWindowClass() const {
     if (RegisterClassExW(&window_class) == 0) {
         const DWORD error_code = GetLastError();
         if (error_code != ERROR_CLASS_ALREADY_EXISTS) {
-            SetLastError(error_code);
-            return false;
+            return common::Result<void>::Failure(
+                L"注册窗口选择遮罩层失败。\n\n" + common::GetLastErrorMessage(error_code));
         }
     }
 
-    return true;
+    return common::Result<void>::Success();
 }
 
 bool WindowSelectionOverlay::UpdateHoveredWindow(const POINT& client_point) {
@@ -213,7 +167,7 @@ void WindowSelectionOverlay::FinishSelection(bool accepted) {
 }
 
 void WindowSelectionOverlay::DrawDimmedRect(HDC hdc, const RECT& rect) const {
-    AlphaFillRect(hdc, rect, kOverlayAlpha);
+    AlphaFillRect(hdc, rect, DefaultOverlayTheme().overlay_alpha);
 }
 
 void WindowSelectionOverlay::DrawHoveredWindow(HDC hdc) const {
@@ -221,6 +175,7 @@ void WindowSelectionOverlay::DrawHoveredWindow(HDC hdc) const {
         return;
     }
 
+    const OverlayTheme& theme = DefaultOverlayTheme();
     const RECT hovered_rect = HoveredWindowRectInClient();
     RECT client_rect{};
     GetClientRect(window_, &client_rect);
@@ -235,13 +190,7 @@ void WindowSelectionOverlay::DrawHoveredWindow(HDC hdc) const {
     DrawDimmedRect(hdc, right_rect);
     DrawDimmedRect(hdc, bottom_rect);
 
-    HPEN border_pen = CreatePen(PS_SOLID, 3, RGB(255, 255, 255));
-    HGDIOBJ previous_pen = SelectObject(hdc, border_pen);
-    HGDIOBJ previous_brush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
-    Rectangle(hdc, hovered_rect.left, hovered_rect.top, hovered_rect.right, hovered_rect.bottom);
-    SelectObject(hdc, previous_brush);
-    SelectObject(hdc, previous_pen);
-    DeleteObject(border_pen);
+    DrawOutlineRect(hdc, hovered_rect, theme.panel_border_color, 3);
 
     RECT label_rect{hovered_rect.left,
                     std::max(0L, hovered_rect.top - 54),
@@ -252,19 +201,24 @@ void WindowSelectionOverlay::DrawHoveredWindow(HDC hdc) const {
         label_rect.bottom = hovered_rect.bottom + 54;
     }
 
-    AlphaFillRect(hdc, label_rect, static_cast<BYTE>(kOverlayAlpha + 40));
+    OverlayPanelStyle label_style{};
+    label_style.background_mode = OverlayPanelStyle::BackgroundMode::Dimmed;
+    label_style.background_alpha = static_cast<BYTE>(theme.overlay_alpha + 40);
+    label_style.text_color = theme.panel_text_color;
+    PaintPanel(hdc, label_rect, label_style);
 
     RECT text_rect = label_rect;
     InflateRect(&text_rect, -10, -8);
-    std::wstring label = hovered_window_->title + L"\n" +
-                         std::to_wstring(common::RectWidth(hovered_window_->bounds)) + L" x " +
-                         std::to_wstring(common::RectHeight(hovered_window_->bounds));
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, RGB(255, 255, 255));
-    DrawTextW(hdc, label.c_str(), -1, &text_rect, DT_LEFT | DT_VCENTER | DT_WORDBREAK);
+    const std::wstring label = hovered_window_->title + L"\n" +
+                               std::to_wstring(common::RectWidth(hovered_window_->bounds)) + L" x " +
+                               std::to_wstring(common::RectHeight(hovered_window_->bounds));
+    DrawTextBlock(
+        hdc, text_rect, label, DT_LEFT | DT_VCENTER | DT_WORDBREAK, label_style.text_color);
 }
 
 void WindowSelectionOverlay::DrawInstructions(HDC hdc, const RECT& bounds) const {
+    const OverlayTheme& theme = DefaultOverlayTheme();
+
     RECT instruction_rect = bounds;
     instruction_rect.left += kInstructionMargin;
     instruction_rect.top += kInstructionMargin;
@@ -272,17 +226,19 @@ void WindowSelectionOverlay::DrawInstructions(HDC hdc, const RECT& bounds) const
         std::min<LONG>(instruction_rect.left + 560, bounds.right - kInstructionMargin);
     instruction_rect.bottom = instruction_rect.top + kInstructionHeight;
 
-    AlphaFillRect(hdc, instruction_rect, static_cast<BYTE>(kOverlayAlpha + 40));
+    OverlayPanelStyle panel_style{};
+    panel_style.background_mode = OverlayPanelStyle::BackgroundMode::Dimmed;
+    panel_style.background_alpha = static_cast<BYTE>(theme.overlay_alpha + 40);
+    panel_style.text_color = theme.panel_text_color;
+    PaintPanel(hdc, instruction_rect, panel_style);
 
     RECT text_rect = instruction_rect;
     InflateRect(&text_rect, -12, -8);
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, RGB(255, 255, 255));
-    DrawTextW(hdc,
-              L"移动到目标窗口上并单击完成窗口截图。\n按 Esc 或右键取消。",
-              -1,
-              &text_rect,
-              DT_LEFT | DT_VCENTER | DT_WORDBREAK);
+    DrawTextBlock(hdc,
+                  text_rect,
+                  L"移动到目标窗口上并单击完成窗口截图。\n按 Esc 或右键取消。",
+                  DT_LEFT | DT_VCENTER | DT_WORDBREAK,
+                  panel_style.text_color);
 }
 
 LRESULT CALLBACK WindowSelectionOverlay::WindowProc(HWND hwnd,

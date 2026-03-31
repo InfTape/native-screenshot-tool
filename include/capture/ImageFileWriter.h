@@ -5,20 +5,18 @@
 #include "capture/BitmapFileWriter.h"
 #include "capture/CapturedImage.h"
 #include "capture/ImageFileFormat.h"
+#include "common/Result.h"
 
 namespace capture {
 
 class ImageFileWriter {
 public:
-    bool Write(const std::wstring& path,
-               const CapturedImage& image,
-               ImageFileFormat format,
-               std::wstring& error_message) const;
+    common::Result<void> Write(const std::wstring& path,
+                               const CapturedImage& image,
+                               ImageFileFormat format) const;
 
 private:
-    bool WritePng(const std::wstring& path,
-                  const CapturedImage& image,
-                  std::wstring& error_message) const;
+    common::Result<void> WritePng(const std::wstring& path, const CapturedImage& image) const;
 
     BitmapFileWriter bitmap_writer_;
 };
