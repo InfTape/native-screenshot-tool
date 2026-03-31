@@ -11,6 +11,10 @@ namespace {
 
 constexpr float kArrowHeadAngleRadians = 0.5235988f;  // 30 degrees
 
+bool IsValidRect(const RECT& rect) {
+    return rect.left < rect.right && rect.top < rect.bottom;
+}
+
 std::wstring FormatHresultMessage(const wchar_t* prefix, HRESULT hr) {
     wchar_t buffer[32]{};
     swprintf_s(buffer, L"0x%08X", static_cast<unsigned int>(hr));
@@ -37,38 +41,31 @@ D2D1_POINT_2F ToD2DPoint(const POINT& point) {
     return D2D1::Point2F(static_cast<float>(point.x), static_cast<float>(point.y));
 }
 
-}  // namespace
+D2D1_RECT_F ToD2DRect(const RECT& rect) {
+    return D2D1::RectF(static_cast<float>(rect.left),
+                       static_cast<float>(rect.top),
+                       static_cast<float>(rect.right),
+                       static_cast<float>(rect.bottom));
+}
 
-namespace common {
-
-bool DrawArrowOnHdc(HDC hdc,
-                    const RECT& render_bounds,
-                    const RECT* clip_rect,
-                    const POINT& start,
-                    const POINT& end,
-                    COLORREF color,
-                    float thickness,
-                    std::wstring& error_message) {
-    error_message.clear();
+bool PrepareDcRenderTarget(HDC hdc,
+                           const RECT& render_bounds,
+                           COLORREF color,
+                           std::wstring& error_message,
+                           ID2D1Factory*& factory,
+                           Microsoft::WRL::ComPtr<ID2D1DCRenderTarget>& render_target,
+                           Microsoft::WRL::ComPtr<ID2D1SolidColorBrush>& brush) {
     if (hdc == nullptr) {
         error_message = L"Direct2D 绘制目标无效。";
         return false;
     }
 
-    if (render_bounds.left >= render_bounds.right || render_bounds.top >= render_bounds.bottom) {
+    if (!IsValidRect(render_bounds)) {
         error_message = L"Direct2D 绘制范围无效。";
         return false;
     }
 
-    const float dx = static_cast<float>(end.x - start.x);
-    const float dy = static_cast<float>(end.y - start.y);
-    const float length = std::hypot(dx, dy);
-    if (length < 1.0f) {
-        error_message = L"箭头长度过短。";
-        return false;
-    }
-
-    ID2D1Factory* factory = GetDirect2DFactory(error_message);
+    factory = GetDirect2DFactory(error_message);
     if (factory == nullptr) {
         return false;
     }
@@ -77,7 +74,6 @@ bool DrawArrowOnHdc(HDC hdc,
         D2D1_RENDER_TARGET_TYPE_DEFAULT,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
 
-    Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> render_target;
     HRESULT hr = factory->CreateDCRenderTarget(&render_target_properties, &render_target);
     if (FAILED(hr)) {
         error_message = FormatHresultMessage(L"创建 Direct2D DCRenderTarget 失败，HRESULT=", hr);
@@ -90,7 +86,6 @@ bool DrawArrowOnHdc(HDC hdc,
         return false;
     }
 
-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
     const D2D1_COLOR_F brush_color = D2D1::ColorF(static_cast<float>(GetRValue(color)) / 255.0f,
                                                   static_cast<float>(GetGValue(color)) / 255.0f,
                                                   static_cast<float>(GetBValue(color)) / 255.0f,
@@ -101,15 +96,109 @@ bool DrawArrowOnHdc(HDC hdc,
         return false;
     }
 
-    D2D1_STROKE_STYLE_PROPERTIES stroke_properties = D2D1::StrokeStyleProperties();
-    stroke_properties.startCap = D2D1_CAP_STYLE_ROUND;
-    stroke_properties.endCap = D2D1_CAP_STYLE_ROUND;
-    stroke_properties.lineJoin = D2D1_LINE_JOIN_ROUND;
+    return true;
+}
 
-    Microsoft::WRL::ComPtr<ID2D1StrokeStyle> stroke_style;
-    hr = factory->CreateStrokeStyle(&stroke_properties, nullptr, 0, &stroke_style);
+bool CreateStrokeStyle(ID2D1Factory* factory,
+                       D2D1_CAP_STYLE start_cap,
+                       D2D1_CAP_STYLE end_cap,
+                       D2D1_LINE_JOIN line_join,
+                       std::wstring& error_message,
+                       Microsoft::WRL::ComPtr<ID2D1StrokeStyle>& stroke_style) {
+    D2D1_STROKE_STYLE_PROPERTIES stroke_properties = D2D1::StrokeStyleProperties();
+    stroke_properties.startCap = start_cap;
+    stroke_properties.endCap = end_cap;
+    stroke_properties.lineJoin = line_join;
+
+    const HRESULT hr = factory->CreateStrokeStyle(&stroke_properties, nullptr, 0, &stroke_style);
     if (FAILED(hr)) {
         error_message = FormatHresultMessage(L"创建 Direct2D 描边样式失败，HRESULT=", hr);
+        return false;
+    }
+
+    return true;
+}
+
+bool HasClipRect(const RECT* clip_rect) {
+    return clip_rect != nullptr && IsValidRect(*clip_rect);
+}
+
+}  // namespace
+
+namespace common {
+
+bool DrawRectangleOnHdc(HDC hdc,
+                        const RECT& render_bounds,
+                        const RECT* clip_rect,
+                        const RECT& rect,
+                        COLORREF color,
+                        float thickness,
+                        std::wstring& error_message) {
+    error_message.clear();
+    if (!IsValidRect(rect)) {
+        error_message = L"矩形区域无效。";
+        return false;
+    }
+
+    ID2D1Factory* factory = nullptr;
+    Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> render_target;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (!PrepareDcRenderTarget(hdc, render_bounds, color, error_message, factory, render_target, brush)) {
+        return false;
+    }
+
+    const float stroke_width = std::max(2.0f, thickness);
+
+    render_target->BeginDraw();
+    render_target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    if (HasClipRect(clip_rect)) {
+        render_target->PushAxisAlignedClip(ToD2DRect(*clip_rect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    }
+    render_target->DrawRectangle(ToD2DRect(rect), brush.Get(), stroke_width);
+    if (HasClipRect(clip_rect)) {
+        render_target->PopAxisAlignedClip();
+    }
+
+    const HRESULT hr = render_target->EndDraw();
+    if (FAILED(hr)) {
+        error_message = FormatHresultMessage(L"Direct2D 绘制矩形失败，HRESULT=", hr);
+        return false;
+    }
+
+    return true;
+}
+
+bool DrawArrowOnHdc(HDC hdc,
+                    const RECT& render_bounds,
+                    const RECT* clip_rect,
+                    const POINT& start,
+                    const POINT& end,
+                    COLORREF color,
+                    float thickness,
+                    std::wstring& error_message) {
+    error_message.clear();
+    const float dx = static_cast<float>(end.x - start.x);
+    const float dy = static_cast<float>(end.y - start.y);
+    const float length = std::hypot(dx, dy);
+    if (length < 1.0f) {
+        error_message = L"箭头长度过短。";
+        return false;
+    }
+
+    ID2D1Factory* factory = nullptr;
+    Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> render_target;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+    if (!PrepareDcRenderTarget(hdc, render_bounds, color, error_message, factory, render_target, brush)) {
+        return false;
+    }
+
+    Microsoft::WRL::ComPtr<ID2D1StrokeStyle> stroke_style;
+    if (!CreateStrokeStyle(factory,
+                           D2D1_CAP_STYLE_ROUND,
+                           D2D1_CAP_STYLE_ROUND,
+                           D2D1_LINE_JOIN_ROUND,
+                           error_message,
+                           stroke_style)) {
         return false;
     }
 
@@ -133,21 +222,16 @@ bool DrawArrowOnHdc(HDC hdc,
 
     render_target->BeginDraw();
     render_target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (clip_rect != nullptr && clip_rect->left < clip_rect->right && clip_rect->top < clip_rect->bottom) {
-        render_target->PushAxisAlignedClip(
-            D2D1::RectF(static_cast<float>(clip_rect->left),
-                        static_cast<float>(clip_rect->top),
-                        static_cast<float>(clip_rect->right),
-                        static_cast<float>(clip_rect->bottom)),
-            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    if (HasClipRect(clip_rect)) {
+        render_target->PushAxisAlignedClip(ToD2DRect(*clip_rect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     }
     render_target->DrawLine(start_point, end_point, brush.Get(), stroke_width, stroke_style.Get());
     render_target->DrawLine(end_point, left_point, brush.Get(), stroke_width, stroke_style.Get());
     render_target->DrawLine(end_point, right_point, brush.Get(), stroke_width, stroke_style.Get());
-    if (clip_rect != nullptr && clip_rect->left < clip_rect->right && clip_rect->top < clip_rect->bottom) {
+    if (HasClipRect(clip_rect)) {
         render_target->PopAxisAlignedClip();
     }
-    hr = render_target->EndDraw();
+    const HRESULT hr = render_target->EndDraw();
     if (FAILED(hr)) {
         error_message = FormatHresultMessage(L"Direct2D 绘制箭头失败，HRESULT=", hr);
         return false;

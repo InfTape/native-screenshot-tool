@@ -261,34 +261,34 @@ bool ImageMarkupService::DrawRectangle(capture::CapturedImage& image,
     auto& pixels = image.Pixels();
     std::copy(pixels.begin(), pixels.end(), static_cast<std::uint8_t*>(bitmap_bits));
 
-    HPEN pen = CreatePen(PS_SOLID, stroke_thickness, color);
-    if (pen == nullptr) {
-        SelectObject(memory_dc, previous_bitmap);
-        DeleteObject(bitmap);
-        DeleteDC(memory_dc);
-        error_message = L"创建矩形画笔失败。";
-        return false;
+    std::wstring d2d_error_message;
+    const RECT full_image_rect{0, 0, image.Width(), image.Height()};
+    const bool draw_succeeded = common::DrawRectangleOnHdc(memory_dc,
+                                                           full_image_rect,
+                                                           &clamped_clip,
+                                                           outline_rect,
+                                                           color,
+                                                           static_cast<float>(stroke_thickness),
+                                                           d2d_error_message);
+    if (draw_succeeded) {
+        std::copy(static_cast<const std::uint8_t*>(bitmap_bits),
+                  static_cast<const std::uint8_t*>(bitmap_bits) + pixels.size(),
+                  pixels.begin());
+
+        RECT dirty_rect = outline_rect;
+        InflateRect(&dirty_rect, stroke_thickness + 2, stroke_thickness + 2);
+        SetAlphaOpaque(image, dirty_rect);
     }
-
-    const HGDIOBJ previous_pen = SelectObject(memory_dc, pen);
-    const HGDIOBJ previous_brush = SelectObject(memory_dc, GetStockObject(HOLLOW_BRUSH));
-    Rectangle(memory_dc, outline_rect.left, outline_rect.top, outline_rect.right, outline_rect.bottom);
-
-    SelectObject(memory_dc, previous_brush);
-    SelectObject(memory_dc, previous_pen);
-    DeleteObject(pen);
-
-    std::copy(static_cast<const std::uint8_t*>(bitmap_bits),
-              static_cast<const std::uint8_t*>(bitmap_bits) + pixels.size(),
-              pixels.begin());
-
-    RECT dirty_rect = outline_rect;
-    InflateRect(&dirty_rect, stroke_thickness, stroke_thickness);
-    SetAlphaOpaque(image, dirty_rect);
 
     SelectObject(memory_dc, previous_bitmap);
     DeleteObject(bitmap);
     DeleteDC(memory_dc);
+
+    if (!draw_succeeded) {
+        error_message = d2d_error_message.empty() ? L"Direct2D 绘制矩形失败。" : d2d_error_message;
+        return false;
+    }
+
     return true;
 }
 

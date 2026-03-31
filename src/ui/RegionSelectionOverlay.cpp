@@ -118,22 +118,6 @@ POINT ClampPointToRect(const POINT& point, const RECT& rect) {
     return clamped;
 }
 
-void DrawRectangleShape(HDC hdc, const RECT& rect, COLORREF color, int thickness) {
-    if (!common::HasArea(rect)) {
-        return;
-    }
-
-    HPEN pen = CreatePen(PS_SOLID, thickness, color);
-    const HGDIOBJ previous_pen = SelectObject(hdc, pen);
-    const HGDIOBJ previous_brush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
-
-    Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
-
-    SelectObject(hdc, previous_brush);
-    SelectObject(hdc, previous_pen);
-    DeleteObject(pen);
-}
-
 }  // namespace
 
 namespace ui {
@@ -1253,7 +1237,19 @@ void RegionSelectionOverlay::DrawRectanglePreview(HDC hdc) const {
         return;
     }
 
-    DrawRectangleShape(hdc, preview_rect, kRectangleColor, kRectangleThickness);
+    RECT client_rect{};
+    if (window_ != nullptr) {
+        GetClientRect(window_, &client_rect);
+    }
+
+    std::wstring error_message;
+    common::DrawRectangleOnHdc(hdc,
+                               client_rect,
+                               common::HasArea(selection_) ? &selection_ : nullptr,
+                               preview_rect,
+                               kRectangleColor,
+                               static_cast<float>(kRectangleThickness),
+                               error_message);
 }
 
 void RegionSelectionOverlay::DrawMosaicPreview(HDC hdc) const {
