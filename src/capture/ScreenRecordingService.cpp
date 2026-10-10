@@ -14,12 +14,15 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 
 #include "common/GdiResources.h"
 #include "common/Win32Error.h"
 #include "capture/WindowCaptureService.h"
 #include "capture/WindowLocator.h"
+#include "capture/GifRecordingWriter.h"
+#include "capture/RecordingFileFormat.h"
 
 namespace {
 
@@ -131,8 +134,12 @@ common::Result<void> ScreenRecordingService::StartSource(const RECT& region, HWN
     if ((width + 1) * (height + 1) > MAXDWORD / 4) {
         return common::Result<void>::Failure(L"录屏区域过大，请选择单个屏幕、窗口或较小区域。");
     }
-    if (std::filesystem::path(path).extension() != L".mp4") {
-        return common::Result<void>::Failure(L"录屏文件必须使用 .mp4 扩展名。");
+    const auto extension = std::filesystem::path(path).extension();
+    if (extension != L".mp4" && extension != L".gif") {
+        return common::Result<void>::Failure(L"录屏文件必须使用 .mp4 或 .gif 扩展名。");
+    }
+    if (extension == L".gif" && (width > 65535 || height > 65535)) {
+        return common::Result<void>::Failure(L"GIF 宽高不能超过 65535 像素。");
     }
     stop_requested_ = false;
     finished_ = false;
@@ -174,6 +181,16 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
     const wchar_t* stage = L"初始化 COM";
     MediaRuntime runtime;
     ComPtr<IMFSinkWriter> writer;
+    std::unique_ptr<GifRecordingWriter> gif_writer;
+    const auto format = std::filesystem::path(path).extension() == L".gif" ?
+        RecordingFileFormat::Gif : RecordingFileFormat::Mp4;
+    const bool is_gif = format == RecordingFileFormat::Gif;
+    const UINT frame_rate = RecordingFrameRate(format);
+    auto started = std::chrono::steady_clock::now();
+    const auto elapsed_time = [&started]() {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - started).count() / 100;
+    };
     try {
         Check(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
         runtime.com_initialized = true;
@@ -185,8 +202,8 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
         const int source_height = region.bottom - region.top;
         // H.264 requires even dimensions. Pad odd edges instead of resizing or
         // discarding a source row/column, so every captured pixel is preserved.
-        const int width = (source_width + 1) & ~1;
-        const int height = (source_height + 1) & ~1;
+        const int width = is_gif ? source_width : (source_width + 1) & ~1;
+        const int height = is_gif ? source_height : (source_height + 1) & ~1;
 
         common::WindowDcHandle screen(nullptr, GetDC(nullptr));
         common::UniqueDc frame_dc(CreateCompatibleDC(screen.Get()));
@@ -206,43 +223,51 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
         PatBlt(frame_dc.Get(), 0, 0, width, height, BLACKNESS);
 
         // Reserve a unique file instead of overwriting an existing recording.
-        stage = L"创建 MP4 文件";
+        stage = L"创建录屏文件";
         ComPtr<IMFByteStream> stream;
         Check(MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_FAIL_IF_EXIST, MF_FILEFLAGS_NONE,
                            path.c_str(), &stream));
         file_created = true;
-        stage = L"创建视频编码器";
-        ComPtr<IMFAttributes> writer_attributes;
-        Check(MFCreateAttributes(&writer_attributes, 1));
-        Check(writer_attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE));
-        Check(MFCreateSinkWriterFromURL(path.c_str(), stream.Get(), writer_attributes.Get(), &writer));
-        ComPtr<IMFMediaType> output;
-        Check(MFCreateMediaType(&output));
-        SetVideoType(output.Get(), MFVideoFormat_H264, width, height);
-        Check(output->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High));
-        const auto bitrate = std::clamp<unsigned long long>(
-            static_cast<unsigned long long>(width) * height * kFrameRate / 3,
-            12'000'000, 200'000'000);
-        Check(output->SetUINT32(MF_MT_AVG_BITRATE, static_cast<UINT32>(bitrate)));
         DWORD stream_index = 0;
-        Check(writer->AddStream(output.Get(), &stream_index));
-        ComPtr<IMFMediaType> input;
-        Check(MFCreateMediaType(&input));
-        SetVideoType(input.Get(), MFVideoFormat_RGB32, width, height);
-        stage = L"配置视频编码器";
-        Check(writer->SetInputMediaType(stream_index, input.Get(), nullptr));
-        ConfigureQuality(writer.Get(), stream_index);
-        Check(writer->BeginWriting());
-        writing = true;
+        if (is_gif) {
+            stage = L"初始化 GIF 编码器";
+            ComPtr<IStream> gif_stream;
+            Check(MFCreateStreamOnMFByteStream(stream.Get(), &gif_stream));
+            gif_writer = std::make_unique<GifRecordingWriter>();
+            gif_writer->Initialize(gif_stream.Get(), width, height);
+        } else {
+            stage = L"创建视频编码器";
+            ComPtr<IMFAttributes> writer_attributes;
+            Check(MFCreateAttributes(&writer_attributes, 1));
+            Check(writer_attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE));
+            Check(MFCreateSinkWriterFromURL(path.c_str(), stream.Get(), writer_attributes.Get(), &writer));
+            ComPtr<IMFMediaType> output;
+            Check(MFCreateMediaType(&output));
+            SetVideoType(output.Get(), MFVideoFormat_H264, width, height);
+            Check(output->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High));
+            const auto bitrate = std::clamp<unsigned long long>(
+                static_cast<unsigned long long>(width) * height * kFrameRate / 3,
+                12'000'000, 200'000'000);
+            Check(output->SetUINT32(MF_MT_AVG_BITRATE, static_cast<UINT32>(bitrate)));
+            Check(writer->AddStream(output.Get(), &stream_index));
+            ComPtr<IMFMediaType> input;
+            Check(MFCreateMediaType(&input));
+            SetVideoType(input.Get(), MFVideoFormat_RGB32, width, height);
+            stage = L"配置视频编码器";
+            Check(writer->SetInputMediaType(stream_index, input.Get(), nullptr));
+            ConfigureQuality(writer.Get(), stream_index);
+            Check(writer->BeginWriting());
+            writing = true;
+        }
         stage = L"采集与编码画面";
 
         const DWORD byte_count = static_cast<DWORD>(static_cast<unsigned long long>(width) * height * 4);
-        const auto started = std::chrono::steady_clock::now();
+        started = std::chrono::steady_clock::now();
         LONGLONG previous_time = -1;
         do {
             const auto captured_at = std::chrono::steady_clock::now();
             if (window) {
-                // A closed, hidden or minimized target ends the recording and finalizes its MP4.
+                // A closed, hidden or minimized target ends the recording and finalizes the output file.
                 if (!IsWindow(window) || !IsWindowVisible(window) || IsIconic(window)) break;
                 const auto target = WindowLocator{}.DescribeWindow(window);
                 if (!target) break;
@@ -281,36 +306,44 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
                 RestoreDC(frame_dc.Get(), -1);
             }
             GdiFlush();
-            ComPtr<IMFMediaBuffer> buffer;
-            Check(MFCreateMemoryBuffer(byte_count, &buffer));
-            BYTE* destination = nullptr;
-            Check(buffer->Lock(&destination, nullptr, nullptr));
-            std::memcpy(destination, pixels, byte_count);
-            Check(buffer->Unlock());
-            Check(buffer->SetCurrentLength(byte_count));
-            ComPtr<IMFSample> sample;
-            Check(MFCreateSample(&sample));
-            Check(sample->AddBuffer(buffer.Get()));
             // Wall-clock timestamps keep slow capture/encoding from speeding up playback.
             const LONGLONG elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 captured_at - started).count() / 100;
             const LONGLONG time = previous_time < 0 ? 0 : std::max(previous_time + 1, elapsed);
-            Check(sample->SetSampleTime(time));
-            Check(sample->SetSampleDuration(kFrameDuration));
-            Check(writer->WriteSample(stream_index, sample.Get()));
+            if (is_gif) {
+                gif_writer->AddFrame(static_cast<const BYTE*>(pixels), time);
+            } else {
+                ComPtr<IMFMediaBuffer> buffer;
+                Check(MFCreateMemoryBuffer(byte_count, &buffer));
+                BYTE* destination = nullptr;
+                Check(buffer->Lock(&destination, nullptr, nullptr));
+                std::memcpy(destination, pixels, byte_count);
+                Check(buffer->Unlock());
+                Check(buffer->SetCurrentLength(byte_count));
+                ComPtr<IMFSample> sample;
+                Check(MFCreateSample(&sample));
+                Check(sample->AddBuffer(buffer.Get()));
+                Check(sample->SetSampleTime(time));
+                Check(sample->SetSampleDuration(kFrameDuration));
+                Check(writer->WriteSample(stream_index, sample.Get()));
+            }
             previous_time = time;
             if (!ready_sent) {
                 ready.set_value(common::Result<void>::Success());
                 ready_sent = true;
             }
             std::unique_lock lock(wait_mutex_);
-            wake_.wait_until(lock, captured_at + std::chrono::nanoseconds(1'000'000'000 / kFrameRate),
+            wake_.wait_until(lock, captured_at + std::chrono::nanoseconds(1'000'000'000 / frame_rate),
                              [this] { return stop_requested_.load(); });
         } while (!stop_requested_);
-        stage = L"保存视频";
-        const HRESULT finalized = writer->Finalize();
-        writing = false;
-        Check(finalized);
+        stage = L"保存录屏";
+        if (is_gif) {
+            gif_writer->Finish(elapsed_time());
+        } else {
+            const HRESULT finalized = writer->Finalize();
+            writing = false;
+            Check(finalized);
+        }
     } catch (HRESULT result) {
         error_ = std::wstring(L"录屏失败（") + stage + L"）：" +
                  common::GetLastErrorMessage(static_cast<DWORD>(result)) +
@@ -320,6 +353,7 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
     }
     if (writing) writer->Finalize();
     writer.Reset();
+    gif_writer.reset();
     if (!ready_sent && file_created) DeleteFileW(path.c_str());
     if (!ready_sent) ready.set_value(common::Result<void>::Failure(error_.empty() ? L"目标窗口已关闭或最小化，未开始录制。" : error_));
     finished_ = true;

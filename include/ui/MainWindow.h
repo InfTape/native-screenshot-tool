@@ -30,6 +30,8 @@ enum class HotkeySlot {
     RegionCapture,
     WindowCapture,
     ScreenRecording,
+    RegionRecording,
+    WindowRecording,
 };
 
 enum class RecordingMode { Full, Region, Window };
@@ -49,7 +51,7 @@ private:
     };
 
     static constexpr wchar_t kClassName[] = L"NativeScreenshot.MainWindow";
-    static constexpr std::size_t kHotkeySlotCount = 4;
+    static constexpr std::size_t kHotkeySlotCount = 6;
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param);
 
@@ -92,6 +94,8 @@ private:
     common::Result<std::wstring> ResolveDefaultSaveDirectory() const;
     bool ChooseSaveDirectory(std::wstring& selected_directory) const;
     void ApplySaveFormatSelection();
+    void ApplyRecordingFormatSelection();
+    void UpdateRecordingSettingsDisplay() const;
     common::Result<void> SyncLaunchAtStartupSetting(bool enabled) const;
     void ToggleLaunchAtStartup();
     LRESULT HandleMessage(UINT message, WPARAM w_param, LPARAM l_param);
@@ -110,6 +114,7 @@ private:
     HWND window_record_button_ = nullptr;
     HWND stop_record_button_ = nullptr;
     HWND recording_label_ = nullptr;
+    HWND recording_format_combo_ = nullptr;
     HWND save_directory_button_ = nullptr;
     HWND save_directory_label_ = nullptr;
     HWND save_format_combo_ = nullptr;

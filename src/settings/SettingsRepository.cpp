@@ -22,9 +22,14 @@ constexpr wchar_t kWindowModifiersKey[] = L"window_capture_modifiers";
 constexpr wchar_t kWindowVirtualKeyKey[] = L"window_capture_virtual_key";
 constexpr wchar_t kRecordingModifiersKey[] = L"screen_recording_modifiers";
 constexpr wchar_t kRecordingVirtualKeyKey[] = L"screen_recording_virtual_key";
+constexpr wchar_t kRegionRecordingModifiersKey[] = L"region_recording_modifiers";
+constexpr wchar_t kRegionRecordingVirtualKeyKey[] = L"region_recording_virtual_key";
+constexpr wchar_t kWindowRecordingModifiersKey[] = L"window_recording_modifiers";
+constexpr wchar_t kWindowRecordingVirtualKeyKey[] = L"window_recording_virtual_key";
 constexpr wchar_t kLaunchAtStartupKey[] = L"launch_at_startup";
 constexpr wchar_t kSaveDirectoryKey[] = L"save_directory";
 constexpr wchar_t kSaveFormatKey[] = L"save_format";
+constexpr wchar_t kRecordingFormatKey[] = L"recording_format";
 
 void LoadHotkey(const std::wstring& path,
                 const wchar_t* modifiers_key,
@@ -81,6 +86,12 @@ void LoadSaveFormat(const std::wstring& path, settings::AppSettings& settings) {
 
     settings.save_format =
         format_value == L"bmp" ? capture::ImageFileFormat::Bmp : capture::ImageFileFormat::Png;
+    GetPrivateProfileStringW(kCaptureSection, kRecordingFormatKey, L"mp4", buffer,
+                            static_cast<DWORD>(std::size(buffer)), path.c_str());
+    format_value = buffer;
+    for (auto& character : format_value) character = static_cast<wchar_t>(towlower(character));
+    settings.recording_format = format_value == L"gif" ? capture::RecordingFileFormat::Gif :
+                                                        capture::RecordingFileFormat::Mp4;
 }
 
 bool SaveCaptureSettings(const std::wstring& path, const settings::AppSettings& settings) {
@@ -89,7 +100,9 @@ bool SaveCaptureSettings(const std::wstring& path, const settings::AppSettings& 
 
     return WritePrivateProfileStringW(
                kCaptureSection, kSaveDirectoryKey, settings.save_directory.c_str(), path.c_str()) != FALSE &&
-           WritePrivateProfileStringW(kCaptureSection, kSaveFormatKey, format_value, path.c_str()) != FALSE;
+           WritePrivateProfileStringW(kCaptureSection, kSaveFormatKey, format_value, path.c_str()) != FALSE &&
+           WritePrivateProfileStringW(kCaptureSection, kRecordingFormatKey,
+               capture::RecordingExtension(settings.recording_format), path.c_str()) != FALSE;
 }
 
 bool SaveLaunchAtStartup(const std::wstring& path, const settings::AppSettings& settings) {
@@ -146,6 +159,10 @@ common::Result<AppSettings> SettingsRepository::Load() const {
     LoadLaunchAtStartup(path_string, settings);
     LoadHotkey(path_string, kRecordingModifiersKey, kRecordingVirtualKeyKey,
                settings.screen_recording_hotkey);
+    LoadHotkey(path_string, kRegionRecordingModifiersKey, kRegionRecordingVirtualKeyKey,
+               settings.region_recording_hotkey);
+    LoadHotkey(path_string, kWindowRecordingModifiersKey, kWindowRecordingVirtualKeyKey,
+               settings.window_recording_hotkey);
     LoadSaveDirectory(path_string, settings);
     LoadSaveFormat(path_string, settings);
 
@@ -179,6 +196,10 @@ common::Result<void> SettingsRepository::Save(const AppSettings& settings) const
                     settings.window_capture_hotkey) ||
         !SaveHotkey(path_string, kRecordingModifiersKey, kRecordingVirtualKeyKey,
                     settings.screen_recording_hotkey) ||
+        !SaveHotkey(path_string, kRegionRecordingModifiersKey, kRegionRecordingVirtualKeyKey,
+                    settings.region_recording_hotkey) ||
+        !SaveHotkey(path_string, kWindowRecordingModifiersKey, kWindowRecordingVirtualKeyKey,
+                    settings.window_recording_hotkey) ||
         !SaveLaunchAtStartup(path_string, settings) ||
         !SaveCaptureSettings(path_string, settings)) {
         return common::Result<void>::Failure(L"写入设置文件失败。");

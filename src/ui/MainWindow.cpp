@@ -32,14 +32,19 @@ constexpr int kFullHotkeyButtonId = 1011;
 constexpr int kRegionHotkeyButtonId = 1012;
 constexpr int kWindowHotkeyButtonId = 1013;
 constexpr int kRecordingHotkeyButtonId = 1014;
+constexpr int kRegionRecordingHotkeyButtonId = 1015;
+constexpr int kWindowRecordingHotkeyButtonId = 1016;
 constexpr int kFullRecordButtonId = 1020;
 constexpr int kRegionRecordButtonId = 1021;
 constexpr int kStopRecordButtonId = 1022;
 constexpr int kWindowRecordButtonId = 1023;
+constexpr int kRecordingFormatComboId = 1024;
 constexpr int kFullHotkeyId = 2001;
 constexpr int kRegionHotkeyId = 2002;
 constexpr int kWindowHotkeyId = 2003;
 constexpr int kRecordingHotkeyId = 2004;
+constexpr int kRegionRecordingHotkeyId = 2005;
+constexpr int kWindowRecordingHotkeyId = 2006;
 constexpr UINT_PTR kRecordingTimerId = 4001;
 constexpr UINT kTrayIconMessage = WM_APP + 1;
 constexpr UINT kRecordingStopMessage = WM_APP + 2;
@@ -93,11 +98,13 @@ private:
     HRESULT result_ = E_FAIL;
 };
 
-constexpr std::array<ui::HotkeySlot, 4> kConfigurableHotkeySlots = {
+constexpr std::array<ui::HotkeySlot, 6> kConfigurableHotkeySlots = {
     ui::HotkeySlot::FullCapture,
     ui::HotkeySlot::RegionCapture,
     ui::HotkeySlot::WindowCapture,
     ui::HotkeySlot::ScreenRecording,
+    ui::HotkeySlot::RegionRecording,
+    ui::HotkeySlot::WindowRecording,
 };
 
 constexpr std::size_t HotkeySlotIndex(ui::HotkeySlot slot) {
@@ -110,6 +117,10 @@ constexpr std::size_t HotkeySlotIndex(ui::HotkeySlot slot) {
         return 2;
     case ui::HotkeySlot::ScreenRecording:
         return 3;
+    case ui::HotkeySlot::RegionRecording:
+        return 4;
+    case ui::HotkeySlot::WindowRecording:
+        return 5;
     case ui::HotkeySlot::None:
     default:
         return 0;
@@ -126,6 +137,10 @@ int GetHotkeyCommandId(ui::HotkeySlot slot) {
         return kWindowHotkeyButtonId;
     case ui::HotkeySlot::ScreenRecording:
         return kRecordingHotkeyButtonId;
+    case ui::HotkeySlot::RegionRecording:
+        return kRegionRecordingHotkeyButtonId;
+    case ui::HotkeySlot::WindowRecording:
+        return kWindowRecordingHotkeyButtonId;
     case ui::HotkeySlot::None:
     default:
         return 0;
@@ -142,6 +157,10 @@ int GetHotkeyIdentifier(ui::HotkeySlot slot) {
         return kWindowHotkeyId;
     case ui::HotkeySlot::ScreenRecording:
         return kRecordingHotkeyId;
+    case ui::HotkeySlot::RegionRecording:
+        return kRegionRecordingHotkeyId;
+    case ui::HotkeySlot::WindowRecording:
+        return kWindowRecordingHotkeyId;
     case ui::HotkeySlot::None:
     default:
         return 0;
@@ -157,7 +176,11 @@ const wchar_t* GetHotkeyButtonText(ui::HotkeySlot slot) {
     case ui::HotkeySlot::WindowCapture:
         return L"设置窗口快捷键";
     case ui::HotkeySlot::ScreenRecording:
-        return L"设置录屏快捷键";
+        return L"设置全屏录制键";
+    case ui::HotkeySlot::RegionRecording:
+        return L"设置选区录制键";
+    case ui::HotkeySlot::WindowRecording:
+        return L"设置窗口录制键";
     case ui::HotkeySlot::None:
     default:
         return L"设置快捷键";
@@ -173,7 +196,11 @@ const wchar_t* GetHotkeyLabelTitle(ui::HotkeySlot slot) {
     case ui::HotkeySlot::WindowCapture:
         return L"窗口截图快捷键：";
     case ui::HotkeySlot::ScreenRecording:
-        return L"录屏开始/停止快捷键：";
+        return L"全屏录制快捷键：";
+    case ui::HotkeySlot::RegionRecording:
+        return L"选区录制快捷键：";
+    case ui::HotkeySlot::WindowRecording:
+        return L"窗口录制快捷键：";
     case ui::HotkeySlot::None:
     default:
         return L"快捷键：";
@@ -189,7 +216,11 @@ const wchar_t* GetCaptureModeName(ui::HotkeySlot slot) {
     case ui::HotkeySlot::WindowCapture:
         return L"窗口截图";
     case ui::HotkeySlot::ScreenRecording:
-        return L"录屏";
+        return L"全屏录制";
+    case ui::HotkeySlot::RegionRecording:
+        return L"选区录制";
+    case ui::HotkeySlot::WindowRecording:
+        return L"窗口录制";
     case ui::HotkeySlot::None:
     default:
         return L"截图";
@@ -207,6 +238,10 @@ hotkey::HotkeyDefinition& AccessHotkeyDefinition(settings::AppSettings& settings
         return settings.window_capture_hotkey;
     case ui::HotkeySlot::ScreenRecording:
         return settings.screen_recording_hotkey;
+    case ui::HotkeySlot::RegionRecording:
+        return settings.region_recording_hotkey;
+    case ui::HotkeySlot::WindowRecording:
+        return settings.window_recording_hotkey;
     case ui::HotkeySlot::None:
     default:
         return settings.region_capture_hotkey;
@@ -224,6 +259,10 @@ const hotkey::HotkeyDefinition& AccessHotkeyDefinition(const settings::AppSettin
         return settings.window_capture_hotkey;
     case ui::HotkeySlot::ScreenRecording:
         return settings.screen_recording_hotkey;
+    case ui::HotkeySlot::RegionRecording:
+        return settings.region_recording_hotkey;
+    case ui::HotkeySlot::WindowRecording:
+        return settings.window_recording_hotkey;
     case ui::HotkeySlot::None:
     default:
         return settings.region_capture_hotkey;
@@ -378,6 +417,11 @@ bool MainWindow::CreateChildControls() {
     window_record_button_ = create_recording_control(L"BUTTON", L"窗口录制", kWindowRecordButtonId);
     stop_record_button_ = create_recording_control(L"BUTTON", L"停止录制", kStopRecordButtonId);
     recording_label_ = create_recording_control(L"STATIC", L"MP4 · 原始分辨率 · 高画质 · 30 FPS · 无音频", 0);
+    recording_format_combo_ = CreateWindowExW(0, L"COMBOBOX", L"录屏保存格式",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST |
+            CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
+        0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kRecordingFormatComboId)),
+        instance_, nullptr);
     full_capture_button_ = CreateWindowExW(0,
                                            L"BUTTON",
                                            L"全屏截图",
@@ -536,7 +580,7 @@ bool MainWindow::CreateChildControls() {
 
     status_label_ = CreateWindowExW(0,
                                     L"STATIC",
-                                    L"支持截图与全屏/选区/窗口录制，可设置四组全局快捷键。",
+                                    L"支持截图与全屏/选区/窗口录制，可设置六组全局快捷键。",
                                     WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
                                     0,
                                     0,
@@ -547,7 +591,7 @@ bool MainWindow::CreateChildControls() {
                                     instance_,
                                     nullptr);
 
-    if (!full_record_button_ || !region_record_button_ || !window_record_button_ || !stop_record_button_ || !recording_label_ ||
+    if (!full_record_button_ || !region_record_button_ || !window_record_button_ || !stop_record_button_ || !recording_label_ || !recording_format_combo_ ||
         full_capture_button_ == nullptr || region_capture_button_ == nullptr ||
         window_capture_button_ == nullptr || save_directory_button_ == nullptr ||
         save_directory_label_ == nullptr || save_format_combo_ == nullptr ||
@@ -558,6 +602,8 @@ bool MainWindow::CreateChildControls() {
 
     SendMessageW(save_format_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"PNG"));
     SendMessageW(save_format_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"BMP"));
+    SendMessageW(recording_format_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"MP4"));
+    SendMessageW(recording_format_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"GIF"));
 
     for (const HWND button : hotkey_buttons_) {
         if (button == nullptr) {
@@ -613,6 +659,7 @@ void MainWindow::ApplyFontToAllControls() {
     apply(window_record_button_);
     apply(stop_record_button_);
     apply(recording_label_);
+    apply(recording_format_combo_);
     apply(save_directory_button_);
     apply(save_directory_label_);
     apply(save_format_combo_);
@@ -642,6 +689,7 @@ bool MainWindow::InitializeHotkeySettings() {
 
     EnsureSaveDirectoryConfigured();
     UpdateSaveSettingsDisplay();
+    UpdateRecordingSettingsDisplay();
     UpdateStartupOptionDisplay();
     UpdateSaveButtonLabel();
 
@@ -953,6 +1001,38 @@ common::Result<void> MainWindow::SyncLaunchAtStartupSetting(bool enabled) const 
     return common::Result<void>::Success();
 }
 
+void MainWindow::UpdateRecordingSettingsDisplay() const {
+    SendMessageW(recording_format_combo_, CB_SETCURSEL,
+                 settings_.recording_format == capture::RecordingFileFormat::Gif ? 1 : 0, 0);
+    if (!recording_service_.IsActive()) {
+        SetWindowTextW(recording_label_, settings_.recording_format == capture::RecordingFileFormat::Gif ?
+            L"原始分辨率 · 256 色 · 15 FPS · 循环播放" :
+            L"原始分辨率 · 高画质 · 30 FPS · 无音频");
+    }
+}
+
+void MainWindow::ApplyRecordingFormatSelection() {
+    if (recording_service_.IsActive()) {
+        UpdateRecordingSettingsDisplay();
+        return;
+    }
+    const LRESULT index = SendMessageW(recording_format_combo_, CB_GETCURSEL, 0, 0);
+    if (index == CB_ERR) return;
+    const auto previous = settings_.recording_format;
+    settings_.recording_format = index == 1 ? capture::RecordingFileFormat::Gif :
+                                             capture::RecordingFileFormat::Mp4;
+    if (settings_.recording_format == previous) return;
+    const auto saved = settings_repository_.Save(settings_);
+    if (!saved) {
+        settings_.recording_format = previous;
+        MessageBoxW(window_, saved.Error().c_str(), L"保存录屏格式失败", MB_OK | MB_ICONWARNING);
+    } else {
+        UpdateStatus(std::wstring(L"录屏保存格式已设置为 ") +
+                     capture::RecordingFormatName(settings_.recording_format) + L"。");
+    }
+    UpdateRecordingSettingsDisplay();
+}
+
 void MainWindow::ToggleLaunchAtStartup() {
     if (launch_at_startup_checkbox_ == nullptr) {
         return;
@@ -1027,25 +1107,28 @@ void MainWindow::LayoutControls(int client_width, int client_height) {
     move(save_directory_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
     x += kButtonWidth + kGap;
 
-    move(save_format_combo_, x, y, kSaveFormatComboWidth, kComboBoxHeight, TRUE);
-    SendMessageW(save_format_combo_, CB_SETITEMHEIGHT, 0, MulDiv(24, dpi_, 96));
-    // The combo's window height includes the drop-down list. Resize its closed
-    // selection field separately, retaining the native theme's border insets.
-    RECT combo_rect{};
-    GetWindowRect(save_format_combo_, &combo_rect);
-    const int row_height = MulDiv(kButtonHeight, dpi_, 96);
-    const LRESULT selection_height = SendMessageW(
-        save_format_combo_, CB_GETITEMHEIGHT, static_cast<WPARAM>(-1), 0);
-    if (selection_height != CB_ERR) {
-        const int border_height = combo_rect.bottom - combo_rect.top -
-                                  static_cast<int>(selection_height);
-        SendMessageW(save_format_combo_, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1),
-                     std::max(1, row_height - border_height));
-    }
-    GetWindowRect(save_format_combo_, &combo_rect);
-    SetWindowPos(save_format_combo_, nullptr, MulDiv(x, dpi_, 96),
-                 MulDiv(y, dpi_, 96) + (row_height - (combo_rect.bottom - combo_rect.top)) / 2,
-                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    const auto layout_combo = [&](HWND combo, int combo_x, int combo_y, int width) {
+        move(combo, combo_x, combo_y, width, kComboBoxHeight, TRUE);
+        SendMessageW(combo, CB_SETITEMHEIGHT, 0, MulDiv(24, dpi_, 96));
+        // The combo's window height includes the drop-down list. Resize its closed
+        // selection field separately, retaining the native theme's border insets.
+        RECT combo_rect{};
+        GetWindowRect(combo, &combo_rect);
+        const int row_height = MulDiv(kButtonHeight, dpi_, 96);
+        const LRESULT selection_height = SendMessageW(
+            combo, CB_GETITEMHEIGHT, static_cast<WPARAM>(-1), 0);
+        if (selection_height != CB_ERR) {
+            const int border_height = combo_rect.bottom - combo_rect.top -
+                                      static_cast<int>(selection_height);
+            SendMessageW(combo, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1),
+                         std::max(1, row_height - border_height));
+        }
+        GetWindowRect(combo, &combo_rect);
+        SetWindowPos(combo, nullptr, MulDiv(combo_x, dpi_, 96),
+                     MulDiv(combo_y, dpi_, 96) + (row_height - (combo_rect.bottom - combo_rect.top)) / 2,
+                     0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    };
+    layout_combo(save_format_combo_, x, y, kSaveFormatComboWidth);
     x += kSaveFormatComboWidth + kGap;
 
     move(save_directory_label_,
@@ -1074,20 +1157,26 @@ void MainWindow::LayoutControls(int client_width, int client_height) {
     move(window_record_button_, kMargin + 2 * (kButtonWidth + kGap), y, kButtonWidth, kButtonHeight, TRUE);
     move(stop_record_button_, kMargin + 3 * (kButtonWidth + kGap), y, kButtonWidth, kButtonHeight, TRUE);
     x = kMargin + 4 * (kButtonWidth + kGap);
-    move(recording_label_, x, y, std::max(220, client_width - x - kMargin), kButtonHeight, TRUE);
+    constexpr int kRecordingFormatComboWidth = 80;
+    layout_combo(recording_format_combo_, x, y, kRecordingFormatComboWidth);
+    x += kRecordingFormatComboWidth + kGap;
+    move(recording_label_, x, y, std::max(1, client_width - x - kMargin), kButtonHeight, TRUE);
     y += kButtonHeight + kGap;
 
+    constexpr int kHotkeyColumnGap = 24;
+    constexpr int kHotkeyRows = 3;
+    const int column_width = (client_width - 2 * kMargin - kHotkeyColumnGap) / 2;
     for (const HotkeySlot slot : kConfigurableHotkeySlots) {
         const std::size_t index = HotkeySlotIndex(slot);
-        move(hotkey_buttons_[index], kMargin, y, kButtonWidth, kButtonHeight, TRUE);
-        move(hotkey_labels_[index],
-                   kMargin + kButtonWidth + kGap,
-                   y,
-                   std::max(220, client_width - ((kMargin * 2) + kButtonWidth + kGap)),
-                   kButtonHeight,
-                   TRUE);
-        y += kButtonHeight + kGap;
+        const int column = static_cast<int>(index) / kHotkeyRows;
+        const int row = static_cast<int>(index) % kHotkeyRows;
+        const int column_x = kMargin + column * (column_width + kHotkeyColumnGap);
+        const int row_y = y + row * (kButtonHeight + kGap);
+        move(hotkey_buttons_[index], column_x, row_y, kButtonWidth, kButtonHeight, TRUE);
+        move(hotkey_labels_[index], column_x + kButtonWidth + kGap, row_y,
+             std::max(1, column_width - kButtonWidth - kGap), kButtonHeight, TRUE);
     }
+    y += kHotkeyRows * (kButtonHeight + kGap);
 
     move(status_label_,
                kMargin,
@@ -1116,10 +1205,12 @@ void MainWindow::UpdateHotkeyLabels() const {
         } else {
             text = std::wstring(GetHotkeyLabelTitle(slot)) +
                    hotkey::FormatHotkey(AccessHotkeyDefinition(settings_, slot));
-            if (recording_hotkey_slot_ != HotkeySlot::None) {
-                text += L"（录制期间临时暂停）";
-            } else {
-                text += hotkey_registered_[index] ? L"（全局已注册）" : L"（注册失败）";
+            if (hotkey::IsValid(AccessHotkeyDefinition(settings_, slot))) {
+                if (recording_hotkey_slot_ != HotkeySlot::None) {
+                    text += L"（录制期间临时暂停）";
+                } else {
+                    text += hotkey_registered_[index] ? L"（全局已注册）" : L"（注册失败）";
+                }
             }
         }
 
@@ -1136,6 +1227,7 @@ void MainWindow::UpdateActionState() const {
     EnableWindow(region_record_button_, !active);
     EnableWindow(window_record_button_, !active);
     EnableWindow(stop_record_button_, active && !recording_stopping_);
+    EnableWindow(recording_format_combo_, !active);
     EnableWindow(full_capture_button_, !active);
     EnableWindow(region_capture_button_, !active);
     EnableWindow(window_capture_button_, !active);
@@ -1347,9 +1439,9 @@ void MainWindow::StartScreenRecording(RecordingMode mode) {
     SYSTEMTIME time{};
     GetLocalTime(&time);
     wchar_t name[128]{};
-    swprintf_s(name, L"Recording_%04u%02u%02u_%02u%02u%02u_%03u_%llu.mp4",
+    swprintf_s(name, L"Recording_%04u%02u%02u_%02u%02u%02u_%03u_%llu.%s",
                time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
-               time.wMilliseconds, GetTickCount64());
+               time.wMilliseconds, GetTickCount64(), capture::RecordingExtension(settings_.recording_format));
     std::error_code error;
     const std::filesystem::path directory(settings_.save_directory);
     std::filesystem::create_directories(directory, error);
@@ -1411,10 +1503,10 @@ void MainWindow::PollScreenRecording() {
         recording_stopping_ = false;
         SetWindowDisplayAffinity(window_, WDA_NONE);
         SetWindowTextW(window_, L"原生 Win32 截图工具");
-        SetWindowTextW(recording_label_, L"MP4 · 原始分辨率 · 高画质 · 30 FPS · 无音频");
+        UpdateRecordingSettingsDisplay();
         UpdateActionState();
         if (result) {
-            UpdateStatus(L"视频已保存到：" + result.Value());
+            UpdateStatus(L"录屏已保存到：" + result.Value());
             tray_icon_controller_.ShowBalloon(L"录屏已保存", result.Value());
         } else {
             UpdateStatus(L"录屏保存失败，请检查磁盘空间及保存目录。");
@@ -1427,8 +1519,9 @@ void MainWindow::PollScreenRecording() {
         const ULONGLONG seconds = (GetTickCount64() - recording_started_) / 1000;
         recording_overlay_.Update(recording_service_.CurrentRegion(), seconds, false);
         wchar_t text[96]{};
-        swprintf_s(text, L"正在录制 %02llu:%02llu:%02llu · MP4 · 无音频",
-                   seconds / 3600, (seconds / 60) % 60, seconds % 60);
+        swprintf_s(text, L"正在录制 %02llu:%02llu:%02llu · %s",
+                   seconds / 3600, (seconds / 60) % 60, seconds % 60,
+                   capture::RecordingFormatName(settings_.recording_format));
         SetWindowTextW(recording_label_, text);
     }
 }
@@ -1579,6 +1672,9 @@ common::Result<void> MainWindow::RegisterConfiguredHotkeys() {
 
     std::vector<std::wstring> failed_messages;
     for (const HotkeySlot slot : kConfigurableHotkeySlots) {
+        if (!hotkey::IsValid(AccessHotkeyDefinition(settings_, slot))) {
+            continue;
+        }
         auto register_result = hotkey_manager_.RegisterHotkey(
             window_, GetHotkeyIdentifier(slot), AccessHotkeyDefinition(settings_, slot));
         if (register_result) {
@@ -1630,6 +1726,14 @@ bool MainWindow::TriggerCaptureByHotkey(int hotkey_identifier) {
     case kRecordingHotkeyId:
         if (recording_service_.IsActive()) StopScreenRecording();
         else StartScreenRecording();
+        return true;
+    case kRegionRecordingHotkeyId:
+        if (recording_service_.IsActive()) StopScreenRecording();
+        else StartScreenRecording(RecordingMode::Region);
+        return true;
+    case kWindowRecordingHotkeyId:
+        if (recording_service_.IsActive()) StopScreenRecording();
+        else StartScreenRecording(RecordingMode::Window);
         return true;
     default:
         return false;
@@ -1721,7 +1825,8 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         break;
     case WM_MEASUREITEM:
         if (auto* item = reinterpret_cast<MEASUREITEMSTRUCT*>(l_param);
-            item->CtlType == ODT_COMBOBOX && item->CtlID == kSaveFormatComboId) {
+            item->CtlType == ODT_COMBOBOX &&
+                (item->CtlID == kSaveFormatComboId || item->CtlID == kRecordingFormatComboId)) {
             item->itemHeight = MulDiv(24, dpi_, 96);
             return TRUE;
         }
@@ -1729,7 +1834,8 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         break;
     case WM_DRAWITEM: {
         const auto& item = *reinterpret_cast<DRAWITEMSTRUCT*>(l_param);
-        if (item.CtlType == ODT_COMBOBOX && item.CtlID == kSaveFormatComboId) {
+        if (item.CtlType == ODT_COMBOBOX &&
+            (item.CtlID == kSaveFormatComboId || item.CtlID == kRecordingFormatComboId)) {
             const int saved_dc = SaveDC(item.hDC);
             const bool selected = (item.itemState & ODS_SELECTED) != 0;
             FillRect(item.hDC, &item.rcItem,
@@ -1741,7 +1847,9 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
             if (item.itemID != static_cast<UINT>(-1)) {
                 RECT text_rect = item.rcItem;
                 text_rect.left += MulDiv(4, dpi_, 96);
-                DrawTextW(item.hDC, item.itemID == 1 ? L"BMP" : L"PNG", -1, &text_rect,
+                const wchar_t* text = item.CtlID == kRecordingFormatComboId ?
+                    (item.itemID == 1 ? L"GIF" : L"MP4") : (item.itemID == 1 ? L"BMP" : L"PNG");
+                DrawTextW(item.hDC, text, -1, &text_rect,
                           DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
             }
             if ((item.itemState & ODS_FOCUS) && !(item.itemState & ODS_NOFOCUSRECT)) {
@@ -1871,6 +1979,10 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
             ApplySaveFormatSelection();
             return 0;
         }
+        if (LOWORD(w_param) == kRecordingFormatComboId && HIWORD(w_param) == CBN_SELCHANGE) {
+            ApplyRecordingFormatSelection();
+            return 0;
+        }
 
         switch (LOWORD(w_param)) {
         case kFullRecordButtonId:
@@ -1887,6 +1999,12 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
             return 0;
         case kRecordingHotkeyButtonId:
             BeginHotkeyRecording(HotkeySlot::ScreenRecording);
+            return 0;
+        case kRegionRecordingHotkeyButtonId:
+            BeginHotkeyRecording(HotkeySlot::RegionRecording);
+            return 0;
+        case kWindowRecordingHotkeyButtonId:
+            BeginHotkeyRecording(HotkeySlot::WindowRecording);
             return 0;
         case kFullCaptureButtonId:
             CaptureDesktop();

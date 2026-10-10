@@ -3,6 +3,7 @@
 #include <string>
 
 #include "capture/ImageFileFormat.h"
+#include "capture/RecordingFileFormat.h"
 #include "hotkey/HotkeyDefinition.h"
 
 namespace settings {
@@ -12,9 +13,12 @@ struct AppSettings {
     hotkey::HotkeyDefinition region_capture_hotkey = hotkey::GetDefaultRegionCaptureHotkey();
     hotkey::HotkeyDefinition window_capture_hotkey = hotkey::GetDefaultWindowCaptureHotkey();
     hotkey::HotkeyDefinition screen_recording_hotkey{MOD_CONTROL | MOD_SHIFT, 'R'};
+    hotkey::HotkeyDefinition region_recording_hotkey{0, 0};
+    hotkey::HotkeyDefinition window_recording_hotkey{0, 0};
     bool launch_at_startup = true;
     std::wstring save_directory;
     capture::ImageFileFormat save_format = capture::ImageFileFormat::Png;
+    capture::RecordingFileFormat recording_format = capture::RecordingFileFormat::Mp4;
 };
 
 }  // namespace settings

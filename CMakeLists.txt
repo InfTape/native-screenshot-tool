@@ -29,6 +29,7 @@ add_executable(NativeScreenshot WIN32
     src/capture/CapturedImage.cpp
     src/capture/ScreenCaptureService.cpp
     src/capture/ScreenRecordingService.cpp
+    src/capture/GifRecordingWriter.cpp
     src/capture/WindowLocator.cpp
     src/capture/WindowCaptureService.cpp
     src/capture/AutoSaveService.cpp
@@ -63,6 +64,8 @@ add_executable(NativeScreenshot WIN32
     include/capture/DesktopSnapshot.h
     include/capture/ScreenCaptureService.h
     include/capture/ScreenRecordingService.h
+    include/capture/GifRecordingWriter.h
+    include/capture/RecordingFileFormat.h
     include/capture/WindowInfo.h
     include/capture/WindowLocator.h
     include/capture/WindowCaptureService.h
@@ -113,6 +116,15 @@ target_link_libraries(NativeScreenshot PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(GifRecordingIntegration tests/GifRecordingIntegration.cpp src/capture/GifRecordingWriter.cpp)
+    target_include_directories(GifRecordingIntegration PRIVATE include)
+    target_compile_definitions(GifRecordingIntegration PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(GifRecordingIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
+    endif()
+    target_link_libraries(GifRecordingIntegration PRIVATE Windowscodecs Ole32)
+    add_test(NAME GifRecordingIntegration COMMAND GifRecordingIntegration)
+    set_tests_properties(GifRecordingIntegration PROPERTIES TIMEOUT 30)
     add_executable(UiTypographyIntegration
         tests/UiTypographyIntegration.cpp
         src/ui/OverlayPrimitives.cpp
@@ -147,6 +159,7 @@ if(BUILD_TESTING)
         tests/ScreenRecordingIntegration.cpp
         src/ui/RecordingOverlay.cpp
         src/capture/ScreenRecordingService.cpp
+        src/capture/GifRecordingWriter.cpp
         src/capture/WindowCaptureService.cpp
         src/capture/WindowLocator.cpp
         src/capture/CapturedImage.cpp
@@ -161,7 +174,7 @@ if(BUILD_TESTING)
     if(MSVC)
         target_compile_options(ScreenRecordingIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
     endif()
-    target_link_libraries(ScreenRecordingIntegration PRIVATE Mfplat Mfreadwrite Mfuuid Ole32 Gdi32 User32 Dwmapi)
+    target_link_libraries(ScreenRecordingIntegration PRIVATE Mfplat Mfreadwrite Mfuuid Ole32 Gdi32 User32 Dwmapi Windowscodecs)
     add_test(NAME ScreenRecordingIntegration COMMAND ScreenRecordingIntegration)
     set_tests_properties(ScreenRecordingIntegration PROPERTIES TIMEOUT 60)
 endif()

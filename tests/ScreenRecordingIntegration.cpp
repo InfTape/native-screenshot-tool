@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 #include <dwmapi.h>
 #include <codecapi.h>
+#include <wincodec.h>
 
 #include <algorithm>
 #include <chrono>
@@ -28,6 +29,34 @@ constexpr DWORD kVideoStream = static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_S
 
 void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void ValidateGif(const std::filesystem::path& path, UINT width, UINT height, bool check_colors = true) {
+    ComPtr<IWICImagingFactory> factory;
+    Require(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&factory))), "GIF decoder factory");
+    ComPtr<IWICBitmapDecoder> decoder;
+    Require(SUCCEEDED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+        WICDecodeMetadataCacheOnLoad, &decoder)), "open actual GIF recording");
+    UINT count = 0;
+    Require(SUCCEEDED(decoder->GetFrameCount(&count)) && count > 0, "GIF recording has frames");
+    ComPtr<IWICBitmapFrameDecode> frame;
+    Require(SUCCEEDED(decoder->GetFrame(0, &frame)), "first GIF recording frame");
+    UINT actual_width = 0, actual_height = 0;
+    Require(SUCCEEDED(frame->GetSize(&actual_width, &actual_height)) && actual_width == width &&
+        actual_height == height, "GIF preserves unpadded source dimensions");
+    if (check_colors) {
+        ComPtr<IWICBitmapSource> rgba;
+        Require(SUCCEEDED(WICConvertBitmapSource(GUID_WICPixelFormat32bppBGRA, frame.Get(), &rgba)), "read GIF frame");
+        std::vector<BYTE> pixels(static_cast<size_t>(width) * height * 4);
+        Require(SUCCEEDED(rgba->CopyPixels(nullptr, width * 4, static_cast<UINT>(pixels.size()), pixels.data())), "GIF pixels");
+        const size_t top = (static_cast<size_t>(height / 4) * width + width / 2) * 4;
+        const size_t bottom = (static_cast<size_t>(3 * height / 4) * width + width / 2) * 4;
+        Require(pixels[top + 1] > 240 && pixels[top] < 16 && pixels[top + 2] < 16,
+                "GIF top green and mask exclusion");
+        Require(pixels[bottom + 2] > 240 && pixels[bottom] < 16 && pixels[bottom + 1] < 16,
+                "GIF bottom red orientation");
+    }
 }
 
 LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM w_param, LPARAM l_param) {
@@ -284,13 +313,28 @@ int wmain(int argument_count, wchar_t** arguments) {
         settings::AppSettings settings;
         settings.launch_at_startup = false;
         settings.screen_recording_hotkey = {MOD_ALT | MOD_SHIFT, 'V'};
+        settings.region_recording_hotkey = {MOD_CONTROL | MOD_ALT, VK_F7};
+        settings.window_recording_hotkey = {MOD_CONTROL | MOD_ALT, VK_F8};
+        settings.recording_format = capture::RecordingFileFormat::Gif;
         Require(static_cast<bool>(settings_repository.Save(settings)), "save recording hotkey");
         const auto loaded = settings_repository.Load();
         Require(loaded && loaded.Value().screen_recording_hotkey.virtual_key == 'V' &&
                 loaded.Value().screen_recording_hotkey.modifiers == (MOD_ALT | MOD_SHIFT), "persist recording hotkey");
+        Require(loaded && loaded.Value().region_recording_hotkey.virtual_key == VK_F7 &&
+                loaded.Value().region_recording_hotkey.modifiers == (MOD_CONTROL | MOD_ALT), "persist region recording hotkey");
+        Require(loaded && loaded.Value().window_recording_hotkey.virtual_key == VK_F8 &&
+                loaded.Value().window_recording_hotkey.modifiers == (MOD_CONTROL | MOD_ALT), "persist window recording hotkey");
+        Require(loaded && loaded.Value().recording_format == capture::RecordingFileFormat::Gif, "persist GIF recording format");
         std::filesystem::remove(root / L"NativeScreenshot" / L"settings.ini");
         const auto defaults = settings_repository.Load();
         Require(defaults && defaults.Value().screen_recording_hotkey.virtual_key == 'R', "backwards compatible default");
+        Require(defaults && defaults.Value().recording_format == capture::RecordingFileFormat::Mp4, "old settings default to MP4");
+        Require(defaults && !hotkey::IsValid(defaults.Value().region_recording_hotkey) &&
+                !hotkey::IsValid(defaults.Value().window_recording_hotkey), "new recording shortcuts default to unassigned");
+        Require(static_cast<bool>(settings_repository.Save(defaults.Value())), "save unassigned recording shortcuts");
+        const auto unassigned = settings_repository.Load();
+        Require(unassigned && !hotkey::IsValid(unassigned.Value().region_recording_hotkey) &&
+                !hotkey::IsValid(unassigned.Value().window_recording_hotkey), "persist unassigned recording shortcuts");
 
         capture::ScreenRecordingService recorder;
         Require(static_cast<bool>(recorder.Stop()), "stop idle recorder");
@@ -333,6 +377,24 @@ int wmain(int argument_count, wchar_t** arguments) {
         Require(SUCCEEDED(MFStartup(MF_VERSION)), "initialize decoder");
         ValidateVideo(path, 322, 242, true, 1.0);
 
+        const auto gif_path = root / L"原始尺寸录屏.gif";
+        Require(static_cast<bool>(live_overlay.Show(fixture, WM_APP + 20, region, L"GIF 录制")), "GIF capture prompts");
+        const auto gif_started = recorder.Start(region, gif_path.wstring());
+        if (!gif_started) std::wcerr << gif_started.Error() << '\n';
+        Require(static_cast<bool>(gif_started), "start native GIF screen capture");
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        Require(static_cast<bool>(recorder.Stop()), "save actual GIF file");
+        live_overlay.Close();
+        ValidateGif(gif_path, 321, 241);
+        const auto gif_size = std::filesystem::file_size(gif_path);
+        Require(!recorder.Start(region, gif_path.wstring()), "refuse overwrite existing GIF");
+        Require(std::filesystem::file_size(gif_path) == gif_size, "existing GIF unchanged");
+        Require(!recorder.Start(region, (root / L"missing" / L"video.gif").wstring()), "GIF unavailable directory");
+        const auto quick_gif = root / L"quick.gif";
+        Require(static_cast<bool>(recorder.Start(region, quick_gif.wstring())), "start immediate GIF");
+        Require(static_cast<bool>(recorder.Stop()), "immediate GIF stop");
+        ValidateGif(quick_gif, 321, 241);
+
         const auto quick = root / L"quick.mp4";
         Require(static_cast<bool>(recorder.Start(region, quick.wstring())), "restart recorder");
         Require(static_cast<bool>(recorder.Stop()), "immediate stop still creates playable MP4");
@@ -370,6 +432,10 @@ int wmain(int argument_count, wchar_t** arguments) {
         Require(static_cast<bool>(recorder.Stop()), "finalize window MP4");
         ValidateVideo(window_video, 322, 242, true, 0.5);
         ShowWindow(window_target.window, SW_SHOWNOACTIVATE);
+        const auto window_gif = root / L"窗口录制.gif";
+        Require(static_cast<bool>(recorder.StartWindow(window_target.window, window_gif.wstring())), "window GIF recording");
+        Require(static_cast<bool>(recorder.Stop()), "save window GIF");
+        ValidateGif(window_gif, 321, 241);
         const auto resized_video = root / L"resize-ends-recording.mp4";
         Require(static_cast<bool>(recorder.StartWindow(window_target.window, resized_video.wstring())), "start fixed-size window recording");
         PostMessageW(window_target.window, WM_APP + 13, 0, 0);
