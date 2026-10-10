@@ -5,6 +5,7 @@
 #include <array>
 #include <optional>
 
+#include "common/GdiResources.h"
 #include "editing/MarkupCommand.h"
 
 namespace ui {
@@ -60,7 +61,8 @@ struct SelectionToolbarButtonId {
 
 class SelectionEditToolbar {
 public:
-    void UpdateLayout(const RECT& selection, const RECT& client_bounds);
+    void UpdateLayout(const RECT& selection, const RECT& client_bounds,
+                      bool for_recording = false, UINT dpi = 96);
     void Hide();
 
     bool IsVisible() const;
@@ -80,6 +82,8 @@ private:
     std::array<Button, kButtonCount> buttons_{};
     RECT bounds_{};
     bool visible_ = false;
+    UINT dpi_ = 96;
+    common::UniqueGdiObject<HFONT> font_;
 };
 
 }  // namespace ui

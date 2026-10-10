@@ -10,11 +10,14 @@ add_executable(NativeScreenshot WIN32
     src/main.cpp
     src/app/App.cpp
     src/ui/MainWindow.cpp
+    src/ui/TitleBar.cpp
+    src/ui/RecordingOverlay.cpp
     src/ui/OverlayPrimitives.cpp
     src/ui/RegionSelectionBuffers.cpp
     src/ui/RegionSelectionOverlay.Geometry.cpp
     src/ui/RegionSelectionOverlay.Input.cpp
     src/ui/RegionSelectionOverlay.cpp
+    src/ui/WindowEditingCanvas.cpp
     src/ui/RegionSelectionRenderer.cpp
     src/ui/SelectionEditToolbar.cpp
     src/ui/SelectionSession.cpp
@@ -25,6 +28,7 @@ add_executable(NativeScreenshot WIN32
     src/hotkey/HotkeyManager.cpp
     src/capture/CapturedImage.cpp
     src/capture/ScreenCaptureService.cpp
+    src/capture/ScreenRecordingService.cpp
     src/capture/WindowLocator.cpp
     src/capture/WindowCaptureService.cpp
     src/capture/AutoSaveService.cpp
@@ -39,9 +43,13 @@ add_executable(NativeScreenshot WIN32
     include/app/App.h
     include/common/GdiResources.h
     include/ui/MainWindow.h
+    include/ui/TitleBar.h
+    include/ui/UiTypography.h
+    include/ui/RecordingOverlay.h
     include/ui/OverlayPrimitives.h
     include/ui/RegionSelectionBuffers.h
     include/ui/RegionSelectionOverlay.h
+    include/ui/WindowEditingCanvas.h
     include/ui/RegionSelectionRenderer.h
     include/ui/SelectionEditToolbar.h
     include/ui/SelectionSession.h
@@ -54,6 +62,7 @@ add_executable(NativeScreenshot WIN32
     include/capture/CapturedImage.h
     include/capture/DesktopSnapshot.h
     include/capture/ScreenCaptureService.h
+    include/capture/ScreenRecordingService.h
     include/capture/WindowInfo.h
     include/capture/WindowLocator.h
     include/capture/WindowCaptureService.h
@@ -93,8 +102,66 @@ target_link_libraries(NativeScreenshot PRIVATE
     Dwmapi
     Gdi32
     Msimg32
+    Mfplat
+    Mfreadwrite
+    Mfuuid
     Ole32
     Shell32
     User32
     Windowscodecs
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(UiTypographyIntegration
+        tests/UiTypographyIntegration.cpp
+        src/ui/OverlayPrimitives.cpp
+        src/ui/WindowEditingCanvas.cpp
+        src/ui/RegionSelectionBuffers.cpp
+        src/ui/RegionSelectionOverlay.cpp
+        src/ui/RegionSelectionOverlay.Geometry.cpp
+        src/ui/RegionSelectionOverlay.Input.cpp
+        src/ui/RegionSelectionRenderer.cpp
+        src/ui/SelectionSession.cpp
+        src/ui/SelectionEditToolbar.cpp
+        src/editing/ImageMarkupService.cpp
+        src/common/Direct2D.cpp
+        src/capture/CapturedImage.cpp
+        src/common/RectUtils.cpp
+        src/ui/RecordingOverlay.cpp
+        src/ui/TitleBar.cpp
+        src/ui/TrayIconController.cpp
+        src/common/DpiAwareness.cpp
+        src/common/Win32Error.cpp
+    )
+    target_include_directories(UiTypographyIntegration PRIVATE include)
+    target_compile_definitions(UiTypographyIntegration PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(UiTypographyIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
+    endif()
+    target_link_libraries(UiTypographyIntegration PRIVATE Comctl32 Shell32 Gdi32 User32 Msimg32 D2d1 Ole32)
+    add_test(NAME UiTypographyIntegration COMMAND UiTypographyIntegration)
+    set_tests_properties(UiTypographyIntegration PROPERTIES TIMEOUT 15)
+
+    add_executable(ScreenRecordingIntegration
+        tests/ScreenRecordingIntegration.cpp
+        src/ui/RecordingOverlay.cpp
+        src/capture/ScreenRecordingService.cpp
+        src/capture/WindowCaptureService.cpp
+        src/capture/WindowLocator.cpp
+        src/capture/CapturedImage.cpp
+        src/common/RectUtils.cpp
+        src/common/Win32Error.cpp
+        src/common/DpiAwareness.cpp
+        src/settings/SettingsRepository.cpp
+        src/hotkey/HotkeyDefinition.cpp
+    )
+    target_include_directories(ScreenRecordingIntegration PRIVATE include)
+    target_compile_definitions(ScreenRecordingIntegration PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(ScreenRecordingIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
+    endif()
+    target_link_libraries(ScreenRecordingIntegration PRIVATE Mfplat Mfreadwrite Mfuuid Ole32 Gdi32 User32 Dwmapi)
+    add_test(NAME ScreenRecordingIntegration COMMAND ScreenRecordingIntegration)
+    set_tests_properties(ScreenRecordingIntegration PROPERTIES TIMEOUT 60)
+endif()

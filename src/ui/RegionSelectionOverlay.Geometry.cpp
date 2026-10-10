@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "common/RectUtils.h"
+#include "ui/UiTypography.h"
 
 namespace ui {
 
@@ -128,15 +129,17 @@ RECT RegionSelectionOverlay::SelectionLabelRect(const RECT& selection, const REC
         return RECT{};
     }
 
+    const UINT dpi = UiDpi(window_);
+    const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
     RECT label_rect{
         selection.left,
-        std::max(client_rect.top, selection.top - 32),
-        selection.left + 180,
+        std::max(client_rect.top, selection.top - scale(32)),
+        selection.left + scale(180),
         selection.top,
     };
-    if (common::RectHeight(label_rect) < 24) {
+    if (common::RectHeight(label_rect) < scale(24)) {
         label_rect.top = selection.bottom;
-        label_rect.bottom = std::min(client_rect.bottom, selection.bottom + 32);
+        label_rect.bottom = std::min(client_rect.bottom, selection.bottom + scale(32));
     }
 
     label_rect.left = std::clamp(label_rect.left, client_rect.left, client_rect.right);

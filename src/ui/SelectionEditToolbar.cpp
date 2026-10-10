@@ -3,14 +3,15 @@
 #include <algorithm>
 
 #include "common/GdiResources.h"
+#include "ui/UiTypography.h"
 
 namespace {
 
-constexpr int kToolbarPadding = 8;
-constexpr int kButtonWidth = 88;
-constexpr int kButtonHeight = 34;
-constexpr int kButtonSpacing = 8;
-constexpr int kToolbarOffset = 12;
+constexpr int kToolbarPadding = 4;
+constexpr int kButtonWidth = 64;
+constexpr int kButtonHeight = 28;
+constexpr int kButtonSpacing = 4;
+constexpr int kToolbarOffset = 8;
 constexpr COLORREF kToolbarBackground = RGB(20, 20, 20);
 constexpr COLORREF kToolbarBorder = RGB(235, 235, 235);
 constexpr COLORREF kToolbarText = RGB(255, 255, 255);
@@ -35,26 +36,43 @@ bool IsButtonEnabled(const ui::SelectionToolbarButtonId& button_id, bool can_und
 
 namespace ui {
 
-void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& client_bounds) {
+void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& client_bounds,
+                                       bool for_recording, UINT dpi) {
+    dpi = dpi ? dpi : 96;
+    if (!font_ || dpi_ != dpi) {
+        font_.Reset(CreateUiFont(dpi));
+        dpi_ = dpi;
+    }
+    const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
+    const int padding = scale(kToolbarPadding);
+    const int spacing = scale(kButtonSpacing);
+    const int offset = scale(kToolbarOffset);
+    const int button_count = for_recording ? 3 : kButtonCount;
+    // Keep all actions reachable on smaller displays at high DPI.
+    const int available_width = static_cast<int>(client_bounds.right - client_bounds.left) -
+                                2 * offset - 2 * padding - (button_count - 1) * spacing;
+    const int button_width = std::max(1, std::min(scale(kButtonWidth), available_width / button_count));
+    const int button_height = scale(kButtonHeight);
+    buttons_ = {};
     const int toolbar_width =
-        (kButtonCount * kButtonWidth) + ((kButtonCount - 1) * kButtonSpacing) +
-        (kToolbarPadding * 2);
-    const int toolbar_height = kButtonHeight + (kToolbarPadding * 2);
+        (button_count * button_width) + ((button_count - 1) * spacing) +
+        (padding * 2);
+    const int toolbar_height = button_height + (padding * 2);
 
     int left = selection.left + ((selection.right - selection.left - toolbar_width) / 2);
     left = std::clamp(left,
-                      static_cast<int>(client_bounds.left) + 12,
-                      std::max(static_cast<int>(client_bounds.left) + 12,
-                               static_cast<int>(client_bounds.right) - toolbar_width - 12));
+                      static_cast<int>(client_bounds.left) + offset,
+                      std::max(static_cast<int>(client_bounds.left) + offset,
+                               static_cast<int>(client_bounds.right) - toolbar_width - offset));
 
-    int top = selection.bottom + kToolbarOffset;
-    if ((top + toolbar_height) > (client_bounds.bottom - 12)) {
-        top = selection.top - toolbar_height - kToolbarOffset;
+    int top = selection.bottom + offset;
+    if ((top + toolbar_height) > (client_bounds.bottom - offset)) {
+        top = selection.top - toolbar_height - offset;
     }
     top = std::clamp(top,
-                     static_cast<int>(client_bounds.top) + 12,
-                     std::max(static_cast<int>(client_bounds.top) + 12,
-                              static_cast<int>(client_bounds.bottom) - toolbar_height - 12));
+                     static_cast<int>(client_bounds.top) + offset,
+                     std::max(static_cast<int>(client_bounds.top) + offset,
+                              static_cast<int>(client_bounds.bottom) - toolbar_height - offset));
 
     bounds_ = CreateRect(left, top, toolbar_width, toolbar_height);
 
@@ -79,13 +97,14 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
         L"取消",
     };
 
-    int button_left = bounds_.left + kToolbarPadding;
-    for (int index = 0; index < kButtonCount; ++index) {
-        buttons_[index].id = kButtonIds[index];
-        buttons_[index].label = kLabels[index];
+    int button_left = bounds_.left + padding;
+    for (int index = 0; index < button_count; ++index) {
+        const int source_index = for_recording && index > 0 ? index + 5 : index;
+        buttons_[index].id = kButtonIds[source_index];
+        buttons_[index].label = for_recording && index == 1 ? L"开始录制" : kLabels[source_index];
         buttons_[index].bounds =
-            CreateRect(button_left, bounds_.top + kToolbarPadding, kButtonWidth, kButtonHeight);
-        button_left += kButtonWidth + kButtonSpacing;
+            CreateRect(button_left, bounds_.top + padding, button_width, button_height);
+        button_left += button_width + spacing;
     }
 
     visible_ = true;
@@ -135,10 +154,12 @@ void SelectionEditToolbar::Paint(HDC hdc, editing::MarkupTool active_tool, bool 
     FillRect(hdc, &bounds_, background_brush.Get());
     FrameRect(hdc, &bounds_, border_brush.Get());
 
+    common::ScopedSelectObject selected_font(hdc, font_.Get());
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, kToolbarText);
 
     for (const auto& button : buttons_) {
+        if (button.id.IsNone()) continue;
         const bool is_active = button.id.IsTool() && button.id.tool == active_tool;
         const bool is_primary_action = button.id.IsCommand(SelectionToolbarCommand::Confirm);
         const bool is_enabled = IsButtonEnabled(button.id, can_undo);
@@ -157,7 +178,7 @@ void SelectionEditToolbar::Paint(HDC hdc, editing::MarkupTool active_tool, bool 
         FrameRect(hdc, &button.bounds, button_border.Get());
 
         RECT text_rect = button.bounds;
-        InflateRect(&text_rect, -6, -4);
+        InflateRect(&text_rect, -MulDiv(6, dpi_, 96), -MulDiv(4, dpi_, 96));
         DrawTextW(hdc, button.label, -1, &text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 }

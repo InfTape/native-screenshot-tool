@@ -41,6 +41,7 @@ void DrawTextBlock(HDC hdc,
                    const RECT& rect,
                    std::wstring_view text,
                    UINT format,
-                   COLORREF text_color);
+                   COLORREF text_color,
+                   UINT dpi);
 
 }  // namespace ui

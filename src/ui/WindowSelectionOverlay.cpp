@@ -9,6 +9,7 @@
 #include "common/RectUtils.h"
 #include "common/Win32Error.h"
 #include "ui/OverlayPrimitives.h"
+#include "ui/UiTypography.h"
 
 namespace {
 
@@ -36,7 +37,8 @@ WindowSelectionOverlay::WindowSelectionOverlay(HINSTANCE instance) : instance_(i
 
 common::Result<std::optional<capture::WindowInfo>> WindowSelectionOverlay::SelectWindow(
     const capture::DesktopSnapshot& snapshot,
-    const std::vector<HWND>& excluded_windows) {
+    const std::vector<HWND>& excluded_windows, bool for_recording) {
+    for_recording_ = for_recording;
     snapshot_ = &snapshot;
     excluded_windows_ = excluded_windows;
     hovered_window_.reset();
@@ -48,9 +50,9 @@ common::Result<std::optional<capture::WindowInfo>> WindowSelectionOverlay::Selec
         return common::Result<std::optional<capture::WindowInfo>>::Failure(register_result.Error());
     }
 
-    window_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+    window_ = CreateWindowExW(WS_EX_TOPMOST | (for_recording ? 0 : WS_EX_TOOLWINDOW),
                               kClassName,
-                              L"窗口截图",
+                              for_recording ? L"选择录制窗口" : L"窗口截图",
                               WS_POPUP,
                               snapshot.origin_x,
                               snapshot.origin_y,
@@ -175,6 +177,8 @@ void WindowSelectionOverlay::DrawHoveredWindow(HDC hdc) const {
         return;
     }
 
+    const UINT dpi = UiDpi(window_);
+    const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
     const OverlayTheme& theme = DefaultOverlayTheme();
     const RECT hovered_rect = HoveredWindowRectInClient();
     RECT client_rect{};
@@ -193,12 +197,12 @@ void WindowSelectionOverlay::DrawHoveredWindow(HDC hdc) const {
     DrawOutlineRect(hdc, hovered_rect, theme.panel_border_color, 3);
 
     RECT label_rect{hovered_rect.left,
-                    std::max(0L, hovered_rect.top - 54),
-                    std::min<LONG>(hovered_rect.right, hovered_rect.left + 420),
+                    std::max(0L, hovered_rect.top - scale(54)),
+                    std::min<LONG>(hovered_rect.right, hovered_rect.left + scale(420)),
                     hovered_rect.top};
-    if (common::RectHeight(label_rect) < 40) {
+    if (common::RectHeight(label_rect) < scale(40)) {
         label_rect.top = hovered_rect.bottom;
-        label_rect.bottom = hovered_rect.bottom + 54;
+        label_rect.bottom = hovered_rect.bottom + scale(54);
     }
 
     OverlayPanelStyle label_style{};
@@ -208,23 +212,29 @@ void WindowSelectionOverlay::DrawHoveredWindow(HDC hdc) const {
     PaintPanel(hdc, label_rect, label_style);
 
     RECT text_rect = label_rect;
-    InflateRect(&text_rect, -10, -8);
-    const std::wstring label = hovered_window_->title + L"\n" +
-                               std::to_wstring(common::RectWidth(hovered_window_->bounds)) + L" x " +
+    InflateRect(&text_rect, -scale(10), -scale(8));
+    RECT title_rect = text_rect;
+    title_rect.bottom = (text_rect.top + text_rect.bottom) / 2;
+    DrawTextBlock(hdc, title_rect, hovered_window_->title,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, label_style.text_color, dpi);
+    text_rect.top = title_rect.bottom;
+    const std::wstring label = std::to_wstring(common::RectWidth(hovered_window_->bounds)) + L" x " +
                                std::to_wstring(common::RectHeight(hovered_window_->bounds));
     DrawTextBlock(
-        hdc, text_rect, label, DT_LEFT | DT_VCENTER | DT_WORDBREAK, label_style.text_color);
+        hdc, text_rect, label, DT_LEFT | DT_VCENTER | DT_SINGLELINE, label_style.text_color, dpi);
 }
 
 void WindowSelectionOverlay::DrawInstructions(HDC hdc, const RECT& bounds) const {
+    const UINT dpi = UiDpi(window_);
+    const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
     const OverlayTheme& theme = DefaultOverlayTheme();
 
     RECT instruction_rect = bounds;
-    instruction_rect.left += kInstructionMargin;
-    instruction_rect.top += kInstructionMargin;
+    instruction_rect.left += scale(kInstructionMargin);
+    instruction_rect.top += scale(kInstructionMargin);
     instruction_rect.right =
-        std::min<LONG>(instruction_rect.left + 560, bounds.right - kInstructionMargin);
-    instruction_rect.bottom = instruction_rect.top + kInstructionHeight;
+        std::min<LONG>(instruction_rect.left + scale(560), bounds.right - scale(kInstructionMargin));
+    instruction_rect.bottom = instruction_rect.top + scale(kInstructionHeight);
 
     OverlayPanelStyle panel_style{};
     panel_style.background_mode = OverlayPanelStyle::BackgroundMode::Dimmed;
@@ -233,12 +243,13 @@ void WindowSelectionOverlay::DrawInstructions(HDC hdc, const RECT& bounds) const
     PaintPanel(hdc, instruction_rect, panel_style);
 
     RECT text_rect = instruction_rect;
-    InflateRect(&text_rect, -12, -8);
+    InflateRect(&text_rect, -scale(12), -scale(8));
     DrawTextBlock(hdc,
                   text_rect,
-                  L"移动到目标窗口上并单击完成窗口截图。\n按 Esc 或右键取消。",
+                  for_recording_ ? L"移动到目标窗口并单击开始窗口录制。\n按 Esc 或右键取消。" :
+                      L"移动到目标窗口上并单击完成窗口截图。\n按 Esc 或右键取消。",
                   DT_LEFT | DT_VCENTER | DT_WORDBREAK,
-                  panel_style.text_color);
+                  panel_style.text_color, dpi);
 }
 
 LRESULT CALLBACK WindowSelectionOverlay::WindowProc(HWND hwnd,

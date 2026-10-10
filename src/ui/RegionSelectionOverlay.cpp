@@ -10,6 +10,8 @@
 #include "common/RectUtils.h"
 #include "common/Win32Error.h"
 #include "editing/ImageMarkupService.h"
+#include "ui/UiTypography.h"
+#include "ui/WindowEditingCanvas.h"
 
 namespace {
 
@@ -40,8 +42,11 @@ namespace ui {
 RegionSelectionOverlay::RegionSelectionOverlay(HINSTANCE instance) : instance_(instance) {}
 
 common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::SelectRegion(
-    const capture::DesktopSnapshot& snapshot) {
-    return RunSession(snapshot, false);
+    const capture::DesktopSnapshot& snapshot, bool for_recording) {
+    for_recording_ = for_recording;
+    auto result = RunSession(snapshot, false);
+    for_recording_ = false;
+    return result;
 }
 
 common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::EditImage(
@@ -49,13 +54,26 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Edi
     return RunSession(snapshot, true);
 }
 
+common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::EditWindow(
+    const capture::DesktopSnapshot& desktop,
+    const capture::CapturedImage& window_image, const POINT& window_origin) {
+    auto canvas = CreateWindowEditingCanvas(desktop, window_image, window_origin);
+    if (!canvas) {
+        return common::Result<std::optional<RegionSelectionResult>>::Failure(canvas.Error());
+    }
+    return RunSession(canvas.Value().snapshot, true, &canvas.Value().selection,
+                      &canvas.Value().desktop_bounds);
+}
+
 common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::RunSession(
     const capture::DesktopSnapshot& snapshot,
-    bool start_with_full_selection) {
+    bool start_with_full_selection, const RECT* initial_selection, const RECT* desktop_bounds) {
     snapshot_ = &snapshot;
     working_image_ = snapshot.image;
     session_.start_with_full_selection = start_with_full_selection;
     InitializeSessionState();
+    window_editing_ = initial_selection != nullptr;
+    instruction_area_ = RECT{};
 
     const auto cleanup = [this]() {
         if (window_ != nullptr) {
@@ -69,6 +87,8 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
         session_.ClearHistory();
         session_.start_with_full_selection = false;
         toolbar_.Hide();
+        window_editing_ = false;
+        instruction_area_ = RECT{};
     };
 
     auto register_result = RegisterWindowClass();
@@ -78,9 +98,9 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
             register_result.Error());
     }
 
-    window_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+    window_ = CreateWindowExW(WS_EX_TOPMOST | (for_recording_ ? 0 : WS_EX_TOOLWINDOW),
                               kClassName,
-                              L"选区截图",
+                              for_recording_ ? L"选择录屏区域" : L"选区截图",
                               WS_POPUP,
                               snapshot.origin_x,
                               snapshot.origin_y,
@@ -97,6 +117,9 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
         return common::Result<std::optional<RegionSelectionResult>>::Failure(error_message);
     }
 
+    if (window_editing_ && desktop_bounds) {
+        instruction_area_ = WindowEditingInstructionArea(*desktop_bounds, *initial_selection, UiDpi(window_));
+    }
     auto create_back_buffer_result = CreateBackBuffer();
     if (!create_back_buffer_result) {
         cleanup();
@@ -107,7 +130,7 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
     if (start_with_full_selection) {
         const RECT full_image_rect{0, 0, snapshot.image.Width(), snapshot.image.Height()};
         if (common::HasArea(full_image_rect)) {
-            CommitSelection(full_image_rect);
+            CommitSelection(initial_selection ? *initial_selection : full_image_rect);
         }
     }
 
@@ -398,7 +421,7 @@ void RegionSelectionOverlay::UpdateToolbarLayout() {
 
     RECT client_rect{};
     GetClientRect(window_, &client_rect);
-    toolbar_.UpdateLayout(session_.selection, client_rect);
+    toolbar_.UpdateLayout(session_.selection, client_rect, for_recording_, UiDpi(window_));
 }
 
 void RegionSelectionOverlay::SetActiveTool(EditTool tool) {
@@ -505,7 +528,10 @@ void RegionSelectionOverlay::PaintBaseImage(HDC hdc) const {
 }
 
 void RegionSelectionOverlay::DrawInstructions(HDC hdc, const RECT& bounds) const {
-    renderer_.DrawInstructions(hdc, bounds, session_.start_with_full_selection);
+    // Window editing draws this above the revealed selection, not into the
+    // dimmed bitmap where restoring the selected window would erase it.
+    if (window_editing_) return;
+    renderer_.DrawInstructions(hdc, bounds, session_.start_with_full_selection, for_recording_, UiDpi(window_));
 }
 
 std::array<RECT, 8> RegionSelectionOverlay::BuildSelectionHandleRects(const RECT& selection) const {
@@ -571,7 +597,10 @@ RegionSelectionRenderModel RegionSelectionOverlay::BuildRenderModel(const RECT& 
 }
 
 void RegionSelectionOverlay::PaintOverlay(HDC hdc, const RECT& client_rect) const {
-    renderer_.PaintOverlay(hdc, client_rect, BuildRenderModel(client_rect), toolbar_);
+    renderer_.PaintOverlay(hdc, client_rect, BuildRenderModel(client_rect), toolbar_, UiDpi(window_));
+    if (window_editing_) {
+        renderer_.DrawInstructions(hdc, instruction_area_, true, false, UiDpi(window_));
+    }
 }
 
 LRESULT CALLBACK RegionSelectionOverlay::WindowProc(HWND hwnd,

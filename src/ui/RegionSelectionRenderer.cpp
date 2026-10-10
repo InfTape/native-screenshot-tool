@@ -71,13 +71,14 @@ void RegionSelectionRenderer::PaintBaseImage(HDC hdc, const capture::CapturedIma
 
 void RegionSelectionRenderer::DrawInstructions(HDC hdc,
                                                const RECT& bounds,
-                                               bool start_with_full_selection) const {
+                                               bool start_with_full_selection, bool for_recording, UINT dpi) const {
+    const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
     RECT instruction_rect = bounds;
-    instruction_rect.left += kInstructionMargin;
-    instruction_rect.top += kInstructionMargin;
+    instruction_rect.left += scale(kInstructionMargin);
+    instruction_rect.top += scale(kInstructionMargin);
     instruction_rect.right =
-        std::min<LONG>(instruction_rect.left + 560, bounds.right - kInstructionMargin);
-    instruction_rect.bottom = instruction_rect.top + kInstructionHeight;
+        std::min<LONG>(instruction_rect.left + scale(560), bounds.right - scale(kInstructionMargin));
+    instruction_rect.bottom = instruction_rect.top + scale(kInstructionHeight);
 
     OverlayPanelStyle panel_style{};
     panel_style.background_mode = OverlayPanelStyle::BackgroundMode::Solid;
@@ -88,13 +89,19 @@ void RegionSelectionRenderer::DrawInstructions(HDC hdc,
     PaintPanel(hdc, instruction_rect, panel_style);
 
     RECT text_rect = instruction_rect;
-    InflateRect(&text_rect, -12, -8);
+    InflateRect(&text_rect, -scale(12), -scale(8));
+    if (for_recording) {
+        DrawTextBlock(hdc, text_rect,
+                      L"拖动鼠标框选录屏区域，可移动或调整范围。按 Enter 或点击“开始录制”开始，按 Esc 或右键取消。",
+                      DT_LEFT | DT_VCENTER | DT_WORDBREAK, panel_style.text_color, dpi);
+        return;
+    }
     if (start_with_full_selection) {
         DrawTextBlock(hdc,
                       text_rect,
                       L"可直接使用画笔、马赛克、矩形或箭头标注，也可拖动或调整范围。按 Enter 完成，按 Esc 或右键取消。",
                       DT_LEFT | DT_VCENTER | DT_WORDBREAK,
-                      panel_style.text_color);
+                      panel_style.text_color, dpi);
         return;
     }
 
@@ -102,20 +109,20 @@ void RegionSelectionRenderer::DrawInstructions(HDC hdc,
                   text_rect,
                   L"拖动鼠标框选截图区域，松开后可继续做画笔、矩形、马赛克或箭头标注。按 Enter 完成，按 Esc 或右键取消。",
                   DT_LEFT | DT_VCENTER | DT_WORDBREAK,
-                  panel_style.text_color);
+                  panel_style.text_color, dpi);
 }
 
 void RegionSelectionRenderer::PaintOverlay(HDC hdc,
                                            const RECT& client_rect,
                                            const RegionSelectionRenderModel& model,
-                                           const SelectionEditToolbar& toolbar) const {
+                                           const SelectionEditToolbar& toolbar, UINT dpi) const {
     if (model.has_selection) {
         DrawSelectionBorder(hdc, model.selection);
         if (model.show_selection_handles) {
             DrawSelectionHandles(hdc, model.selection_handle_rects);
         }
         if (model.has_selection_label) {
-            DrawSelectionLabel(hdc, model.selection_label_rect, model.selection_label_text);
+            DrawSelectionLabel(hdc, model.selection_label_rect, model.selection_label_text, dpi);
         }
     }
 
@@ -151,7 +158,7 @@ void RegionSelectionRenderer::DrawSelectionHandles(
 
 void RegionSelectionRenderer::DrawSelectionLabel(HDC hdc,
                                                  const RECT& label_rect,
-                                                 const std::wstring& text) const {
+                                                 const std::wstring& text, UINT dpi) const {
     OverlayPanelStyle panel_style{};
     panel_style.background_mode = OverlayPanelStyle::BackgroundMode::Solid;
     panel_style.background_color = theme_.panel_color;
@@ -161,9 +168,9 @@ void RegionSelectionRenderer::DrawSelectionLabel(HDC hdc,
     PaintPanel(hdc, label_rect, panel_style);
 
     RECT text_rect = label_rect;
-    InflateRect(&text_rect, -8, -6);
+    InflateRect(&text_rect, -MulDiv(8, dpi, 96), -MulDiv(6, dpi, 96));
     DrawTextBlock(
-        hdc, text_rect, text, DT_LEFT | DT_VCENTER | DT_SINGLELINE, panel_style.text_color);
+        hdc, text_rect, text, DT_LEFT | DT_VCENTER | DT_SINGLELINE, panel_style.text_color, dpi);
 }
 
 void RegionSelectionRenderer::DrawRectanglePreview(HDC hdc,

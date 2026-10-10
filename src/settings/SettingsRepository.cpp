@@ -20,6 +20,8 @@ constexpr wchar_t kRegionModifiersKey[] = L"region_capture_modifiers";
 constexpr wchar_t kRegionVirtualKeyKey[] = L"region_capture_virtual_key";
 constexpr wchar_t kWindowModifiersKey[] = L"window_capture_modifiers";
 constexpr wchar_t kWindowVirtualKeyKey[] = L"window_capture_virtual_key";
+constexpr wchar_t kRecordingModifiersKey[] = L"screen_recording_modifiers";
+constexpr wchar_t kRecordingVirtualKeyKey[] = L"screen_recording_virtual_key";
 constexpr wchar_t kLaunchAtStartupKey[] = L"launch_at_startup";
 constexpr wchar_t kSaveDirectoryKey[] = L"save_directory";
 constexpr wchar_t kSaveFormatKey[] = L"save_format";
@@ -142,6 +144,8 @@ common::Result<AppSettings> SettingsRepository::Load() const {
                kWindowVirtualKeyKey,
                settings.window_capture_hotkey);
     LoadLaunchAtStartup(path_string, settings);
+    LoadHotkey(path_string, kRecordingModifiersKey, kRecordingVirtualKeyKey,
+               settings.screen_recording_hotkey);
     LoadSaveDirectory(path_string, settings);
     LoadSaveFormat(path_string, settings);
 
@@ -173,6 +177,8 @@ common::Result<void> SettingsRepository::Save(const AppSettings& settings) const
                     kWindowModifiersKey,
                     kWindowVirtualKeyKey,
                     settings.window_capture_hotkey) ||
+        !SaveHotkey(path_string, kRecordingModifiersKey, kRecordingVirtualKeyKey,
+                    settings.screen_recording_hotkey) ||
         !SaveLaunchAtStartup(path_string, settings) ||
         !SaveCaptureSettings(path_string, settings)) {
         return common::Result<void>::Failure(L"写入设置文件失败。");

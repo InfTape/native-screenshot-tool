@@ -1,7 +1,10 @@
 #include "ui/OverlayPrimitives.h"
 
+#include <map>
+
 #include "common/GdiResources.h"
 #include "common/RectUtils.h"
+#include "ui/UiTypography.h"
 
 namespace {
 
@@ -127,14 +130,25 @@ void DrawTextBlock(HDC hdc,
                    const RECT& rect,
                    std::wstring_view text,
                    UINT format,
-                   COLORREF text_color) {
+                   COLORREF text_color,
+                   UINT dpi) {
     if (!common::HasArea(rect) || text.empty()) {
         return;
     }
 
+    // Every overlay text call explicitly uses the shared UI font, even when its
+    // memory DC starts with SYSTEM_FONT or a previous caller selected another font.
+    static thread_local std::map<UINT, common::UniqueGdiObject<HFONT>> fonts;
+    dpi = dpi ? dpi : 96;
+    auto& font = fonts[dpi];
+    if (!font) font.Reset(CreateUiFont(dpi));
+    if (!font) return;
+    common::ScopedSelectObject selected_font(hdc, font.Get());
+    if (!selected_font.IsValid()) return;
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, text_color);
-    DrawTextW(hdc, text.data(), static_cast<int>(text.size()), const_cast<RECT*>(&rect), format);
+    RECT text_rect = rect;
+    DrawTextW(hdc, text.data(), static_cast<int>(text.size()), &text_rect, format | DT_NOPREFIX);
 }
 
 }  // namespace ui

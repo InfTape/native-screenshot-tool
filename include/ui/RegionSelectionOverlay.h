@@ -28,9 +28,12 @@ public:
     explicit RegionSelectionOverlay(HINSTANCE instance);
 
     common::Result<std::optional<RegionSelectionResult>> SelectRegion(
-        const capture::DesktopSnapshot& snapshot);
+        const capture::DesktopSnapshot& snapshot, bool for_recording = false);
     common::Result<std::optional<RegionSelectionResult>> EditImage(
         const capture::DesktopSnapshot& snapshot);
+    common::Result<std::optional<RegionSelectionResult>> EditWindow(
+        const capture::DesktopSnapshot& desktop,
+        const capture::CapturedImage& window_image, const POINT& window_origin);
 
 private:
     using EditTool = editing::MarkupTool;
@@ -48,7 +51,8 @@ private:
 
     common::Result<std::optional<RegionSelectionResult>> RunSession(
         const capture::DesktopSnapshot& snapshot,
-        bool start_with_full_selection);
+        bool start_with_full_selection,
+        const RECT* initial_selection = nullptr, const RECT* desktop_bounds = nullptr);
     void InitializeSessionState();
     common::Result<void> RegisterWindowClass() const;
     common::Result<void> CreateBackBuffer();
@@ -115,6 +119,9 @@ private:
     capture::CapturedImage working_image_;
     SelectionSession session_;
     SelectionEditToolbar toolbar_;
+    bool for_recording_ = false;
+    bool window_editing_ = false;
+    RECT instruction_area_{};
     RegionSelectionBuffers buffers_;
     RegionSelectionRenderer renderer_;
     common::UniqueRegion pending_dirty_region_;

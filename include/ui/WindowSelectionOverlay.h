@@ -18,7 +18,7 @@ public:
 
     common::Result<std::optional<capture::WindowInfo>> SelectWindow(
         const capture::DesktopSnapshot& snapshot,
-        const std::vector<HWND>& excluded_windows);
+        const std::vector<HWND>& excluded_windows, bool for_recording = false);
 
 private:
     static constexpr wchar_t kClassName[] = L"NativeScreenshot.WindowSelectionOverlay";
@@ -41,6 +41,7 @@ private:
     capture::WindowLocator window_locator_;
     bool finished_ = false;
     bool accepted_ = false;
+    bool for_recording_ = false;
     std::optional<capture::WindowInfo> hovered_window_;
 };
 

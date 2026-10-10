@@ -60,16 +60,17 @@ public:
     [[nodiscard]] int MosaicBlockSize() const;
 
     void PaintBaseImage(HDC hdc, const capture::CapturedImage& image) const;
-    void DrawInstructions(HDC hdc, const RECT& bounds, bool start_with_full_selection) const;
+    void DrawInstructions(HDC hdc, const RECT& bounds, bool start_with_full_selection,
+                          bool for_recording, UINT dpi) const;
     void PaintOverlay(HDC hdc,
                       const RECT& client_rect,
                       const RegionSelectionRenderModel& model,
-                      const SelectionEditToolbar& toolbar) const;
+                      const SelectionEditToolbar& toolbar, UINT dpi) const;
 
 private:
     void DrawSelectionBorder(HDC hdc, const RECT& selection) const;
     void DrawSelectionHandles(HDC hdc, const std::array<RECT, 8>& handle_rects) const;
-    void DrawSelectionLabel(HDC hdc, const RECT& label_rect, const std::wstring& text) const;
+    void DrawSelectionLabel(HDC hdc, const RECT& label_rect, const std::wstring& text, UINT dpi) const;
     void DrawRectanglePreview(HDC hdc,
                               const RECT& client_rect,
                               const RECT& preview_rect,

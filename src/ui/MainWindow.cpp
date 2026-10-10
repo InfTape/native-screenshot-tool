@@ -1,8 +1,11 @@
 #include "ui/MainWindow.h"
 
 #include <Windows.h>
+#include <commctrl.h>
+#include <dwmapi.h>
 #include <shobjidl.h>
 #include <shlobj.h>
+#include <windowsx.h>
 
 #include <algorithm>
 #include <array>
@@ -13,6 +16,7 @@
 
 #include "common/Win32Error.h"
 #include "hotkey/HotkeyDefinition.h"
+#include "ui/UiTypography.h"
 
 namespace {
 
@@ -27,30 +31,38 @@ constexpr int kLaunchAtStartupCheckboxId = 1008;
 constexpr int kFullHotkeyButtonId = 1011;
 constexpr int kRegionHotkeyButtonId = 1012;
 constexpr int kWindowHotkeyButtonId = 1013;
+constexpr int kRecordingHotkeyButtonId = 1014;
+constexpr int kFullRecordButtonId = 1020;
+constexpr int kRegionRecordButtonId = 1021;
+constexpr int kStopRecordButtonId = 1022;
+constexpr int kWindowRecordButtonId = 1023;
 constexpr int kFullHotkeyId = 2001;
 constexpr int kRegionHotkeyId = 2002;
 constexpr int kWindowHotkeyId = 2003;
+constexpr int kRecordingHotkeyId = 2004;
+constexpr UINT_PTR kRecordingTimerId = 4001;
 constexpr UINT kTrayIconMessage = WM_APP + 1;
+constexpr UINT kRecordingStopMessage = WM_APP + 2;
 
 constexpr int kWindowWidth = 1240;
-constexpr int kWindowHeight = 360;
+constexpr int kWindowHeight = 460;
 constexpr int kMinWindowWidth = 980;
-constexpr int kMinWindowHeight = 320;
+constexpr int kMinWindowHeight = 450;
 constexpr int kMargin = 16;
-constexpr int kButtonWidth = 132;
-constexpr int kDirectoryButtonWidth = 148;
-constexpr int kSmallButtonWidth = 96;
-constexpr int kHotkeyButtonWidth = 168;
+constexpr int kButtonWidth = 148;
 constexpr int kButtonHeight = 32;
 constexpr int kComboBoxHeight = 220;
 constexpr int kGap = 10;
 constexpr int kStatusHeight = 24;
-constexpr int kHotkeyLabelHeight = 24;
 constexpr int kSaveFormatComboWidth = 110;
-constexpr int kStartupOptionMinWidth = 320;
+constexpr int kStartupOptionFallbackWidth = 320;
 constexpr wchar_t kStartupRegistryPath[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kStartupValueName[] = L"NativeScreenshot";
 constexpr wchar_t kStartupLaunchArgument[] = L"--startup";
+
+UINT WindowDpi(HWND window) {
+    return ui::UiDpi(window);
+}
 
 struct ScopedBooleanReset {
     explicit ScopedBooleanReset(bool& value) : value_(value) {
@@ -81,10 +93,11 @@ private:
     HRESULT result_ = E_FAIL;
 };
 
-constexpr std::array<ui::HotkeySlot, 3> kConfigurableHotkeySlots = {
+constexpr std::array<ui::HotkeySlot, 4> kConfigurableHotkeySlots = {
     ui::HotkeySlot::FullCapture,
     ui::HotkeySlot::RegionCapture,
     ui::HotkeySlot::WindowCapture,
+    ui::HotkeySlot::ScreenRecording,
 };
 
 constexpr std::size_t HotkeySlotIndex(ui::HotkeySlot slot) {
@@ -95,6 +108,8 @@ constexpr std::size_t HotkeySlotIndex(ui::HotkeySlot slot) {
         return 1;
     case ui::HotkeySlot::WindowCapture:
         return 2;
+    case ui::HotkeySlot::ScreenRecording:
+        return 3;
     case ui::HotkeySlot::None:
     default:
         return 0;
@@ -109,6 +124,8 @@ int GetHotkeyCommandId(ui::HotkeySlot slot) {
         return kRegionHotkeyButtonId;
     case ui::HotkeySlot::WindowCapture:
         return kWindowHotkeyButtonId;
+    case ui::HotkeySlot::ScreenRecording:
+        return kRecordingHotkeyButtonId;
     case ui::HotkeySlot::None:
     default:
         return 0;
@@ -123,6 +140,8 @@ int GetHotkeyIdentifier(ui::HotkeySlot slot) {
         return kRegionHotkeyId;
     case ui::HotkeySlot::WindowCapture:
         return kWindowHotkeyId;
+    case ui::HotkeySlot::ScreenRecording:
+        return kRecordingHotkeyId;
     case ui::HotkeySlot::None:
     default:
         return 0;
@@ -137,6 +156,8 @@ const wchar_t* GetHotkeyButtonText(ui::HotkeySlot slot) {
         return L"设置选区快捷键";
     case ui::HotkeySlot::WindowCapture:
         return L"设置窗口快捷键";
+    case ui::HotkeySlot::ScreenRecording:
+        return L"设置录屏快捷键";
     case ui::HotkeySlot::None:
     default:
         return L"设置快捷键";
@@ -151,6 +172,8 @@ const wchar_t* GetHotkeyLabelTitle(ui::HotkeySlot slot) {
         return L"选区截图快捷键：";
     case ui::HotkeySlot::WindowCapture:
         return L"窗口截图快捷键：";
+    case ui::HotkeySlot::ScreenRecording:
+        return L"录屏开始/停止快捷键：";
     case ui::HotkeySlot::None:
     default:
         return L"快捷键：";
@@ -165,6 +188,8 @@ const wchar_t* GetCaptureModeName(ui::HotkeySlot slot) {
         return L"选区截图";
     case ui::HotkeySlot::WindowCapture:
         return L"窗口截图";
+    case ui::HotkeySlot::ScreenRecording:
+        return L"录屏";
     case ui::HotkeySlot::None:
     default:
         return L"截图";
@@ -180,6 +205,8 @@ hotkey::HotkeyDefinition& AccessHotkeyDefinition(settings::AppSettings& settings
         return settings.region_capture_hotkey;
     case ui::HotkeySlot::WindowCapture:
         return settings.window_capture_hotkey;
+    case ui::HotkeySlot::ScreenRecording:
+        return settings.screen_recording_hotkey;
     case ui::HotkeySlot::None:
     default:
         return settings.region_capture_hotkey;
@@ -195,6 +222,8 @@ const hotkey::HotkeyDefinition& AccessHotkeyDefinition(const settings::AppSettin
         return settings.region_capture_hotkey;
     case ui::HotkeySlot::WindowCapture:
         return settings.window_capture_hotkey;
+    case ui::HotkeySlot::ScreenRecording:
+        return settings.screen_recording_hotkey;
     case ui::HotkeySlot::None:
     default:
         return settings.region_capture_hotkey;
@@ -263,7 +292,7 @@ MainWindow::MainWindow(HINSTANCE instance)
     : instance_(instance),
       region_selection_overlay_(instance),
       window_selection_overlay_(instance),
-      tray_icon_controller_(instance) {}
+      tray_icon_controller_(instance), recording_overlay_(instance) {}
 
 bool MainWindow::Create() {
     WNDCLASSEXW window_class{};
@@ -296,7 +325,18 @@ bool MainWindow::Create() {
                               instance_,
                               this);
 
-    return window_ != nullptr;
+    if (window_ == nullptr) return false;
+
+    // Window and control dimensions are expressed in 96-DPI logical pixels.
+    RECT bounds{0, 0, MulDiv(kWindowWidth, dpi_, 96), MulDiv(kWindowHeight, dpi_, 96)};
+    using AdjustWindowRectExForDpiFn = BOOL(WINAPI*)(LPRECT, DWORD, BOOL, DWORD, UINT);
+    const auto adjust_for_dpi = reinterpret_cast<AdjustWindowRectExForDpiFn>(
+        GetProcAddress(GetModuleHandleW(L"user32.dll"), "AdjustWindowRectExForDpi"));
+    if (adjust_for_dpi) adjust_for_dpi(&bounds, WS_OVERLAPPEDWINDOW & ~WS_CAPTION, FALSE, 0, dpi_);
+    else AdjustWindowRectEx(&bounds, WS_OVERLAPPEDWINDOW & ~WS_CAPTION, FALSE, 0);
+    SetWindowPos(window_, nullptr, 0, 0, bounds.right - bounds.left, bounds.bottom - bounds.top,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    return true;
 }
 
 void MainWindow::Show(int nCmdShow, bool start_hidden_to_tray) {
@@ -328,6 +368,16 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND hwnd, UINT message, WPARAM w_param,
 }
 
 bool MainWindow::CreateChildControls() {
+    const auto create_recording_control = [this](const wchar_t* type, const wchar_t* text, int id) {
+        return CreateWindowExW(0, type, text,
+            WS_CHILD | WS_VISIBLE | (id ? WS_TABSTOP | BS_PUSHBUTTON : SS_LEFTNOWORDWRAP | SS_CENTERIMAGE),
+            0, 0, 0, 0, window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance_, nullptr);
+    };
+    full_record_button_ = create_recording_control(L"BUTTON", L"全屏录制", kFullRecordButtonId);
+    region_record_button_ = create_recording_control(L"BUTTON", L"选区录制", kRegionRecordButtonId);
+    window_record_button_ = create_recording_control(L"BUTTON", L"窗口录制", kWindowRecordButtonId);
+    stop_record_button_ = create_recording_control(L"BUTTON", L"停止录制", kStopRecordButtonId);
+    recording_label_ = create_recording_control(L"STATIC", L"MP4 · 原始分辨率 · 高画质 · 30 FPS · 无音频", 0);
     full_capture_button_ = CreateWindowExW(0,
                                            L"BUTTON",
                                            L"全屏截图",
@@ -387,7 +437,7 @@ bool MainWindow::CreateChildControls() {
     save_directory_label_ = CreateWindowExW(0,
                                             L"STATIC",
                                             L"保存目录：",
-                                            WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
+                                            WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP | SS_CENTERIMAGE,
                                             0,
                                             0,
                                             0,
@@ -400,7 +450,8 @@ bool MainWindow::CreateChildControls() {
     save_format_combo_ = CreateWindowExW(0,
                                          L"COMBOBOX",
                                          L"",
-                                         WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+                                         WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST |
+                                             CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
                                          0,
                                          0,
                                          0,
@@ -472,7 +523,7 @@ bool MainWindow::CreateChildControls() {
         hotkey_labels_[index] = CreateWindowExW(0,
                                                 L"STATIC",
                                                 L"",
-                                                WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
+                                                WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP | SS_CENTERIMAGE,
                                                 0,
                                                 0,
                                                 0,
@@ -485,7 +536,7 @@ bool MainWindow::CreateChildControls() {
 
     status_label_ = CreateWindowExW(0,
                                     L"STATIC",
-                                    L"支持全屏截图、选区截图、窗口截图，并可分别设置三组全局快捷键。",
+                                    L"支持截图与全屏/选区/窗口录制，可设置四组全局快捷键。",
                                     WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
                                     0,
                                     0,
@@ -496,7 +547,8 @@ bool MainWindow::CreateChildControls() {
                                     instance_,
                                     nullptr);
 
-    if (full_capture_button_ == nullptr || region_capture_button_ == nullptr ||
+    if (!full_record_button_ || !region_record_button_ || !window_record_button_ || !stop_record_button_ || !recording_label_ ||
+        full_capture_button_ == nullptr || region_capture_button_ == nullptr ||
         window_capture_button_ == nullptr || save_directory_button_ == nullptr ||
         save_directory_label_ == nullptr || save_format_combo_ == nullptr ||
         launch_at_startup_checkbox_ == nullptr ||
@@ -519,27 +571,27 @@ bool MainWindow::CreateChildControls() {
         }
     }
 
+    CreateUIFont();
     RECT client_rect{};
     GetClientRect(window_, &client_rect);
     LayoutControls(client_rect.right - client_rect.left, client_rect.bottom - client_rect.top);
     UpdateActionState();
     UpdateHotkeyLabels();
 
-    CreateUIFont();
-    ApplyFontToAllControls();
-
     return true;
 }
 
 void MainWindow::CreateUIFont() {
-    NONCLIENTMETRICSW metrics{};
-    metrics.cbSize = sizeof(metrics);
-    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0)) {
-        ui_font_ = CreateFontIndirectW(&metrics.lfMessageFont);
-    }
-    if (ui_font_ == nullptr) {
-        ui_font_ = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-    }
+    HFONT replacement = CreateUiFont(dpi_);
+    if (!replacement && ui_font_) return;
+
+    const HFONT previous = ui_font_;
+    const bool owned_previous = owns_ui_font_;
+    owns_ui_font_ = replacement != nullptr;
+    ui_font_ = replacement ? replacement : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    ApplyFontToAllControls();
+    title_bar_.SetFont(ui_font_);
+    if (previous && owned_previous) DeleteObject(previous);
 }
 
 void MainWindow::ApplyFontToAllControls() {
@@ -556,6 +608,11 @@ void MainWindow::ApplyFontToAllControls() {
     apply(full_capture_button_);
     apply(region_capture_button_);
     apply(window_capture_button_);
+    apply(full_record_button_);
+    apply(region_record_button_);
+    apply(window_record_button_);
+    apply(stop_record_button_);
+    apply(recording_label_);
     apply(save_directory_button_);
     apply(save_directory_label_);
     apply(save_format_combo_);
@@ -941,63 +998,98 @@ void MainWindow::ToggleLaunchAtStartup() {
 
 void MainWindow::LayoutControls(int client_width, int client_height) {
     static_cast<void>(client_height);
-    int y = kMargin;
+    title_bar_.Layout(client_width);
+    client_width = MulDiv(client_width, 96, dpi_);
+    const auto move = [this](HWND control, int x, int y, int width, int height, BOOL repaint) {
+        ::MoveWindow(control, MulDiv(x, dpi_, 96), MulDiv(y, dpi_, 96),
+                     MulDiv(width, dpi_, 96), MulDiv(height, dpi_, 96), repaint);
+    };
+    int y = kMargin + TitleBar::kHeight;
     int x = kMargin;
 
-    MoveWindow(full_capture_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
+    move(full_capture_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
     x += kButtonWidth + kGap;
 
-    MoveWindow(region_capture_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
+    move(region_capture_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
     x += kButtonWidth + kGap;
 
-    MoveWindow(window_capture_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
+    move(window_capture_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
     x += kButtonWidth + kGap;
 
-    MoveWindow(save_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
+    move(save_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
     x += kButtonWidth + kGap;
 
-    MoveWindow(clear_button_, x, y, kSmallButtonWidth, kButtonHeight, TRUE);
+    move(clear_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
 
     y += kButtonHeight + kGap;
 
     x = kMargin;
-    MoveWindow(save_directory_button_, x, y, kDirectoryButtonWidth, kButtonHeight, TRUE);
-    x += kDirectoryButtonWidth + kGap;
+    move(save_directory_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
+    x += kButtonWidth + kGap;
 
-    MoveWindow(save_format_combo_, x, y, kSaveFormatComboWidth, kComboBoxHeight, TRUE);
+    move(save_format_combo_, x, y, kSaveFormatComboWidth, kComboBoxHeight, TRUE);
+    SendMessageW(save_format_combo_, CB_SETITEMHEIGHT, 0, MulDiv(24, dpi_, 96));
+    // The combo's window height includes the drop-down list. Resize its closed
+    // selection field separately, retaining the native theme's border insets.
+    RECT combo_rect{};
+    GetWindowRect(save_format_combo_, &combo_rect);
+    const int row_height = MulDiv(kButtonHeight, dpi_, 96);
+    const LRESULT selection_height = SendMessageW(
+        save_format_combo_, CB_GETITEMHEIGHT, static_cast<WPARAM>(-1), 0);
+    if (selection_height != CB_ERR) {
+        const int border_height = combo_rect.bottom - combo_rect.top -
+                                  static_cast<int>(selection_height);
+        SendMessageW(save_format_combo_, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1),
+                     std::max(1, row_height - border_height));
+    }
+    GetWindowRect(save_format_combo_, &combo_rect);
+    SetWindowPos(save_format_combo_, nullptr, MulDiv(x, dpi_, 96),
+                 MulDiv(y, dpi_, 96) + (row_height - (combo_rect.bottom - combo_rect.top)) / 2,
+                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     x += kSaveFormatComboWidth + kGap;
 
-    MoveWindow(save_directory_label_,
+    move(save_directory_label_,
                x,
-               y + (kButtonHeight - kHotkeyLabelHeight) / 2,
-               std::max(220, client_width - (x + kMargin)),
-               kHotkeyLabelHeight,
-               TRUE);
-
-    y += kButtonHeight + kGap;
-
-    MoveWindow(launch_at_startup_checkbox_,
-               kMargin,
                y,
-               std::max(kStartupOptionMinWidth, client_width - (kMargin * 2)),
+               std::max(220, client_width - (x + kMargin)),
                kButtonHeight,
                TRUE);
 
     y += kButtonHeight + kGap;
 
+    // Native checkboxes toggle throughout their client area, including blank space.
+    // Limit that area to the theme's measured glyph and label width.
+    SIZE startup_size{};
+    if (!SendMessageW(launch_at_startup_checkbox_, BCM_GETIDEALSIZE, 0,
+                      reinterpret_cast<LPARAM>(&startup_size))) {
+        startup_size.cx = MulDiv(kStartupOptionFallbackWidth, dpi_, 96);
+    }
+    ::MoveWindow(launch_at_startup_checkbox_, MulDiv(kMargin, dpi_, 96), MulDiv(y, dpi_, 96),
+                 startup_size.cx, MulDiv(kButtonHeight, dpi_, 96), TRUE);
+
+    y += kButtonHeight + kGap;
+
+    move(full_record_button_, kMargin, y, kButtonWidth, kButtonHeight, TRUE);
+    move(region_record_button_, kMargin + kButtonWidth + kGap, y, kButtonWidth, kButtonHeight, TRUE);
+    move(window_record_button_, kMargin + 2 * (kButtonWidth + kGap), y, kButtonWidth, kButtonHeight, TRUE);
+    move(stop_record_button_, kMargin + 3 * (kButtonWidth + kGap), y, kButtonWidth, kButtonHeight, TRUE);
+    x = kMargin + 4 * (kButtonWidth + kGap);
+    move(recording_label_, x, y, std::max(220, client_width - x - kMargin), kButtonHeight, TRUE);
+    y += kButtonHeight + kGap;
+
     for (const HotkeySlot slot : kConfigurableHotkeySlots) {
         const std::size_t index = HotkeySlotIndex(slot);
-        MoveWindow(hotkey_buttons_[index], kMargin, y, kHotkeyButtonWidth, kButtonHeight, TRUE);
-        MoveWindow(hotkey_labels_[index],
-                   kMargin + kHotkeyButtonWidth + kGap,
-                   y + (kButtonHeight - kHotkeyLabelHeight) / 2,
-                   std::max(220, client_width - ((kMargin * 2) + kHotkeyButtonWidth + kGap)),
-                   kHotkeyLabelHeight,
+        move(hotkey_buttons_[index], kMargin, y, kButtonWidth, kButtonHeight, TRUE);
+        move(hotkey_labels_[index],
+                   kMargin + kButtonWidth + kGap,
+                   y,
+                   std::max(220, client_width - ((kMargin * 2) + kButtonWidth + kGap)),
+                   kButtonHeight,
                    TRUE);
         y += kButtonHeight + kGap;
     }
 
-    MoveWindow(status_label_,
+    move(status_label_,
                kMargin,
                y,
                std::max(240, client_width - (kMargin * 2)),
@@ -1039,6 +1131,15 @@ void MainWindow::UpdateActionState() const {
     const BOOL has_image = image_.IsEmpty() ? FALSE : TRUE;
     EnableWindow(save_button_, has_image);
     EnableWindow(clear_button_, has_image);
+    const bool active = recording_service_.IsActive();
+    EnableWindow(full_record_button_, !active);
+    EnableWindow(region_record_button_, !active);
+    EnableWindow(window_record_button_, !active);
+    EnableWindow(stop_record_button_, active && !recording_stopping_);
+    EnableWindow(full_capture_button_, !active);
+    EnableWindow(region_capture_button_, !active);
+    EnableWindow(window_capture_button_, !active);
+    for (HWND button : hotkey_buttons_) EnableWindow(button, !active);
 }
 
 common::Result<capture::DesktopSnapshot> MainWindow::CaptureSnapshot() const {
@@ -1076,7 +1177,7 @@ bool MainWindow::FinalizeCapturedImage(const std::wstring& capture_name) {
 }
 
 bool MainWindow::CaptureDesktop() {
-    if (capture_in_progress_) {
+    if (capture_in_progress_ || recording_service_.IsActive()) {
         return false;
     }
 
@@ -1098,7 +1199,7 @@ bool MainWindow::CaptureDesktop() {
 }
 
 bool MainWindow::CaptureRegion() {
-    if (capture_in_progress_) {
+    if (capture_in_progress_ || recording_service_.IsActive()) {
         return false;
     }
 
@@ -1132,7 +1233,7 @@ bool MainWindow::CaptureRegion() {
 }
 
 bool MainWindow::CaptureWindow() {
-    if (capture_in_progress_) {
+    if (capture_in_progress_ || recording_service_.IsActive()) {
         return false;
     }
 
@@ -1172,12 +1273,9 @@ bool MainWindow::CaptureWindow() {
         return false;
     }
 
-    capture::DesktopSnapshot editing_snapshot{};
-    editing_snapshot.origin_x = selected_window.Value()->bounds.left;
-    editing_snapshot.origin_y = selected_window.Value()->bounds.top;
-    editing_snapshot.image = std::move(captured_window.Value());
-
-    auto edited_result = region_selection_overlay_.EditImage(editing_snapshot);
+    const POINT window_origin{selected_window.Value()->bounds.left, selected_window.Value()->bounds.top};
+    auto edited_result = region_selection_overlay_.EditWindow(
+        snapshot.Value(), captured_window.Value(), window_origin);
     if (!edited_result) {
         UpdateStatus(L"窗口截图失败。");
         MessageBoxW(window_, edited_result.Error().c_str(), L"编辑失败", MB_OK | MB_ICONERROR);
@@ -1191,6 +1289,148 @@ bool MainWindow::CaptureWindow() {
 
     image_ = std::move(edited_result.Value()->image);
     return FinalizeCapturedImage(L"窗口截图");
+}
+
+void MainWindow::StartScreenRecording(RecordingMode mode) {
+    if (capture_in_progress_ || recording_service_.IsActive()) return;
+    if (recording_hotkey_slot_ != HotkeySlot::None) CancelHotkeyRecording();
+    ScopedBooleanReset capturing(capture_in_progress_);
+    if (!EnsureSaveDirectoryConfigured()) return;
+
+    const bool was_visible = IsWindowVisible(window_) != FALSE;
+    // Exclude the control window too, including any compositor frame left while it hides.
+    SetWindowDisplayAffinity(window_, WDA_EXCLUDEFROMCAPTURE);
+    if (tray_icon_controller_.IsInstalled()) {
+        HideToTray(false);
+        // Wait for the hidden window to disappear from the compositor before capture.
+        DwmFlush();
+    }
+    const auto restore = [this, was_visible]() {
+        SetWindowDisplayAffinity(window_, WDA_NONE);
+        if (was_visible) ShowFromTray();
+    };
+    RECT region{GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN), 0, 0};
+    region.right = region.left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    region.bottom = region.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    HWND target_window = nullptr;
+    if (mode == RecordingMode::Window) {
+        auto snapshot = CaptureSnapshot();
+        if (!snapshot) { restore(); UpdateStatus(L"无法创建窗口选择画面。"); return; }
+        auto selection = window_selection_overlay_.SelectWindow(snapshot.Value(), {window_}, true);
+        if (!selection || !selection.Value()) {
+            restore();
+            UpdateStatus(L"已取消窗口录制。");
+            if (!selection) MessageBoxW(window_, selection.Error().c_str(), L"窗口选择失败", MB_OK | MB_ICONERROR);
+            return;
+        }
+        target_window = selection.Value()->handle;
+        region = selection.Value()->bounds;
+    } else if (mode == RecordingMode::Region) {
+        auto snapshot = CaptureSnapshot();
+        if (!snapshot) {
+            restore();
+            MessageBoxW(window_, snapshot.Error().c_str(), L"录屏选区失败", MB_OK | MB_ICONERROR);
+            return;
+        }
+        UpdateStatus(L"请选择录屏区域并确认，Esc 取消。");
+        auto selection = region_selection_overlay_.SelectRegion(snapshot.Value(), true);
+        if (!selection || !selection.Value().has_value()) {
+            restore();
+            UpdateStatus(L"已取消选区录屏。");
+            if (!selection) MessageBoxW(window_, selection.Error().c_str(), L"录屏选区失败", MB_OK | MB_ICONERROR);
+            return;
+        }
+        region = selection.Value()->region;
+        OffsetRect(&region, snapshot.Value().origin_x, snapshot.Value().origin_y);
+    }
+
+    SYSTEMTIME time{};
+    GetLocalTime(&time);
+    wchar_t name[128]{};
+    swprintf_s(name, L"Recording_%04u%02u%02u_%02u%02u%02u_%03u_%llu.mp4",
+               time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
+               time.wMilliseconds, GetTickCount64());
+    std::error_code error;
+    const std::filesystem::path directory(settings_.save_directory);
+    std::filesystem::create_directories(directory, error);
+    if (error) {
+        restore();
+        MessageBoxW(window_, L"无法创建录屏保存目录，请重新设置保存目录。", L"录屏失败", MB_OK | MB_ICONERROR);
+        return;
+    }
+    auto result = target_window ? recording_service_.StartWindow(target_window, (directory / name).wstring()) :
+        recording_service_.Start(region, (directory / name).wstring());
+    if (!result) {
+        restore();
+        UpdateStatus(L"录屏启动失败。");
+        MessageBoxW(window_, result.Error().c_str(), L"录屏失败", MB_OK | MB_ICONERROR);
+        return;
+    }
+    recording_started_ = GetTickCount64();
+    recording_stopping_ = false;
+    const wchar_t* mode_label = mode == RecordingMode::Window ? L"窗口录制" :
+        mode == RecordingMode::Region ? L"选区录制" : L"全屏录制";
+    auto overlay_result = recording_overlay_.Show(window_, kRecordingStopMessage,
+        recording_service_.CurrentRegion(), mode_label);
+    if (!overlay_result) {
+        recording_service_.Stop();
+        restore();
+        UpdateStatus(L"录屏提示层创建失败，录屏已停止。");
+        MessageBoxW(window_, overlay_result.Error().c_str(), L"录屏失败", MB_OK | MB_ICONERROR);
+        return;
+    }
+    if (SetTimer(window_, kRecordingTimerId, 250, nullptr) == 0) {
+        recording_service_.Stop();
+        recording_overlay_.Close();
+        restore();
+        UpdateStatus(L"无法创建录屏状态计时器，录屏已停止。");
+        return;
+    }
+    SetWindowTextW(window_, L"录制中 - 原生 Win32 截图工具");
+    UpdateActionState();
+    UpdateStatus(L"正在录屏，按 " + hotkey::FormatHotkey(settings_.screen_recording_hotkey) +
+                 L" 或使用托盘菜单停止并保存。");
+    PollScreenRecording();
+}
+
+void MainWindow::StopScreenRecording() {
+    if (!recording_service_.IsActive() || recording_stopping_) return;
+    recording_stopping_ = true;
+    recording_service_.RequestStop();
+    recording_overlay_.Update(recording_service_.CurrentRegion(), (GetTickCount64() - recording_started_) / 1000, true);
+    SetWindowTextW(recording_label_, L"正在结束录屏并保存视频…");
+    UpdateActionState();
+}
+
+void MainWindow::PollScreenRecording() {
+    if (!recording_service_.IsActive()) return;
+    if (recording_service_.IsFinished()) {
+        KillTimer(window_, kRecordingTimerId);
+        recording_overlay_.Close();
+        auto result = recording_service_.Stop();
+        recording_stopping_ = false;
+        SetWindowDisplayAffinity(window_, WDA_NONE);
+        SetWindowTextW(window_, L"原生 Win32 截图工具");
+        SetWindowTextW(recording_label_, L"MP4 · 原始分辨率 · 高画质 · 30 FPS · 无音频");
+        UpdateActionState();
+        if (result) {
+            UpdateStatus(L"视频已保存到：" + result.Value());
+            tray_icon_controller_.ShowBalloon(L"录屏已保存", result.Value());
+        } else {
+            UpdateStatus(L"录屏保存失败，请检查磁盘空间及保存目录。");
+            ShowFromTray();
+            MessageBoxW(window_, result.Error().c_str(), L"录屏失败", MB_OK | MB_ICONERROR);
+        }
+        return;
+    }
+    if (!recording_stopping_) {
+        const ULONGLONG seconds = (GetTickCount64() - recording_started_) / 1000;
+        recording_overlay_.Update(recording_service_.CurrentRegion(), seconds, false);
+        wchar_t text[96]{};
+        swprintf_s(text, L"正在录制 %02llu:%02llu:%02llu · MP4 · 无音频",
+                   seconds / 3600, (seconds / 60) % 60, seconds % 60);
+        SetWindowTextW(recording_label_, text);
+    }
 }
 
 void MainWindow::SaveCapture() {
@@ -1225,6 +1465,7 @@ void MainWindow::ClearCapture() {
 }
 
 void MainWindow::BeginHotkeyRecording(HotkeySlot slot) {
+    if (recording_service_.IsActive()) return;
     recording_hotkey_slot_ = slot;
     UnregisterAllHotkeys();
     UpdateHotkeyLabels();
@@ -1386,6 +1627,10 @@ bool MainWindow::TriggerCaptureByHotkey(int hotkey_identifier) {
         return CaptureRegion();
     case kWindowHotkeyId:
         return CaptureWindow();
+    case kRecordingHotkeyId:
+        if (recording_service_.IsActive()) StopScreenRecording();
+        else StartScreenRecording();
+        return true;
     default:
         return false;
     }
@@ -1413,6 +1658,13 @@ void MainWindow::ShowFromTray() {
 }
 
 void MainWindow::ExitApplication() {
+    if (capture_in_progress_) return;
+    if (recording_service_.IsActive()) {
+        recording_overlay_.Close();
+        UpdateStatus(L"正在结束录屏并保存视频…");
+        auto result = recording_service_.Stop();
+        if (!result) MessageBoxW(window_, result.Error().c_str(), L"录屏保存失败", MB_OK | MB_ICONERROR);
+    }
     exiting_ = true;
     hidden_to_tray_ = false;
     DestroyWindow(window_);
@@ -1432,6 +1684,18 @@ void MainWindow::HandleTrayCommand(TrayMenuCommand command) {
     case TrayMenuCommand::CaptureWindow:
         CaptureWindow();
         break;
+    case TrayMenuCommand::RecordFull:
+        StartScreenRecording();
+        break;
+    case TrayMenuCommand::RecordRegion:
+        StartScreenRecording(RecordingMode::Region);
+        break;
+    case TrayMenuCommand::RecordWindow:
+        StartScreenRecording(RecordingMode::Window);
+        break;
+    case TrayMenuCommand::StopRecording:
+        StopScreenRecording();
+        break;
     case TrayMenuCommand::ExitApplication:
         ExitApplication();
         break;
@@ -1443,7 +1707,55 @@ void MainWindow::HandleTrayCommand(TrayMenuCommand command) {
 
 LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) {
     switch (message) {
+    case WM_NCCALCSIZE:
+        return TitleBar::CalculateClient(window_, w_param, l_param);
+    case WM_NCHITTEST:
+        return TitleBar::HitTest(window_, l_param);
+    case WM_SETTEXT: {
+        const LRESULT result = DefWindowProcW(window_, message, w_param, l_param);
+        InvalidateRect(window_, nullptr, FALSE);
+        return result;
+    }
+    case WM_ACTIVATE:
+        InvalidateRect(window_, nullptr, FALSE);
+        break;
+    case WM_MEASUREITEM:
+        if (auto* item = reinterpret_cast<MEASUREITEMSTRUCT*>(l_param);
+            item->CtlType == ODT_COMBOBOX && item->CtlID == kSaveFormatComboId) {
+            item->itemHeight = MulDiv(24, dpi_, 96);
+            return TRUE;
+        }
+        if (tray_icon_controller_.MeasureMenuItem(*reinterpret_cast<MEASUREITEMSTRUCT*>(l_param))) return TRUE;
+        break;
+    case WM_DRAWITEM: {
+        const auto& item = *reinterpret_cast<DRAWITEMSTRUCT*>(l_param);
+        if (item.CtlType == ODT_COMBOBOX && item.CtlID == kSaveFormatComboId) {
+            const int saved_dc = SaveDC(item.hDC);
+            const bool selected = (item.itemState & ODS_SELECTED) != 0;
+            FillRect(item.hDC, &item.rcItem,
+                     GetSysColorBrush(selected ? COLOR_HIGHLIGHT : COLOR_WINDOW));
+            SetBkMode(item.hDC, TRANSPARENT);
+            SetTextColor(item.hDC, GetSysColor((item.itemState & ODS_DISABLED) ? COLOR_GRAYTEXT :
+                         selected ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT));
+            if (ui_font_) SelectObject(item.hDC, ui_font_);
+            if (item.itemID != static_cast<UINT>(-1)) {
+                RECT text_rect = item.rcItem;
+                text_rect.left += MulDiv(4, dpi_, 96);
+                DrawTextW(item.hDC, item.itemID == 1 ? L"BMP" : L"PNG", -1, &text_rect,
+                          DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+            }
+            if ((item.itemState & ODS_FOCUS) && !(item.itemState & ODS_NOFOCUSRECT)) {
+                DrawFocusRect(item.hDC, &item.rcItem);
+            }
+            RestoreDC(item.hDC, saved_dc);
+            return TRUE;
+        }
+        if (title_bar_.DrawButton(item) || tray_icon_controller_.DrawMenuItem(item)) return TRUE;
+        break;
+    }
     case WM_CREATE:
+        dpi_ = WindowDpi(window_);
+        if (!title_bar_.Create(window_, instance_)) return -1;
         if (!CreateChildControls()) {
             return -1;
         }
@@ -1451,11 +1763,37 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         InitializeTrayIcon();
         return 0;
 
+    case kRecordingStopMessage:
+        StopScreenRecording();
+        return 0;
+
     case WM_GETMINMAXINFO: {
         auto* min_max_info = reinterpret_cast<MINMAXINFO*>(l_param);
-        min_max_info->ptMinTrackSize.x = kMinWindowWidth;
-        min_max_info->ptMinTrackSize.y = kMinWindowHeight;
+        const UINT dpi = WindowDpi(window_);
+        min_max_info->ptMinTrackSize.x = MulDiv(kMinWindowWidth, dpi, 96);
+        min_max_info->ptMinTrackSize.y = MulDiv(kMinWindowHeight, dpi, 96);
         return 0;
+    }
+
+    case WM_DPICHANGED: {
+        dpi_ = LOWORD(w_param);
+        CreateUIFont();
+        const auto* bounds = reinterpret_cast<const RECT*>(l_param);
+        SetWindowPos(window_, nullptr, bounds->left, bounds->top,
+                     bounds->right - bounds->left, bounds->bottom - bounds->top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        RECT client_rect{};
+        GetClientRect(window_, &client_rect);
+        LayoutControls(client_rect.right, client_rect.bottom);
+        InvalidateRect(window_, nullptr, TRUE);
+        return 0;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC dc = reinterpret_cast<HDC>(w_param);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
+        return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
     }
 
     case WM_SIZE:
@@ -1472,16 +1810,32 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         }
         break;
 
+    case WM_TIMER:
+        if (w_param == kRecordingTimerId) {
+            PollScreenRecording();
+            return 0;
+        }
+        break;
+
     case kTrayIconMessage:
-        switch (l_param) {
+        switch (tray_icon_controller_.UsesVersion4() ? LOWORD(l_param) : l_param) {
+        case NIN_POPUPOPEN:
+            tray_icon_controller_.ShowTooltip(POINT{GET_X_LPARAM(w_param), GET_Y_LPARAM(w_param)});
+            return 0;
+        case NIN_POPUPCLOSE:
+            tray_icon_controller_.HideTooltip();
+            return 0;
+        case NIN_SELECT:
+        case NIN_KEYSELECT:
         case WM_LBUTTONDBLCLK:
             ShowFromTray();
             return 0;
         case WM_RBUTTONUP:
         case WM_CONTEXTMENU: {
-            POINT point{};
-            GetCursorPos(&point);
-            if (auto command = tray_icon_controller_.ShowContextMenu(window_, point);
+            POINT point{GET_X_LPARAM(w_param), GET_Y_LPARAM(w_param)};
+            if (!tray_icon_controller_.UsesVersion4()) GetCursorPos(&point);
+            if (auto command = tray_icon_controller_.ShowContextMenu(window_, point,
+                    recording_service_.IsActive(), recording_stopping_);
                 command.has_value()) {
                 HandleTrayCommand(*command);
             }
@@ -1492,6 +1846,17 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         }
         break;
 
+    case WM_CONTEXTMENU: {
+        POINT point{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)};
+        if (point.x == -1 && point.y == -1) {
+            point = {MulDiv(kMargin, dpi_, 96), MulDiv(TitleBar::kHeight, dpi_, 96)};
+            ClientToScreen(window_, &point);
+        }
+        if (auto command = tray_icon_controller_.ShowContextMenu(window_, point,
+                recording_service_.IsActive(), recording_stopping_)) HandleTrayCommand(*command);
+        return 0;
+    }
+
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
         if (recording_hotkey_slot_ != HotkeySlot::None) {
@@ -1501,12 +1866,28 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         break;
 
     case WM_COMMAND:
+        if (title_bar_.HandleCommand(LOWORD(w_param))) return 0;
         if (LOWORD(w_param) == kSaveFormatComboId && HIWORD(w_param) == CBN_SELCHANGE) {
             ApplySaveFormatSelection();
             return 0;
         }
 
         switch (LOWORD(w_param)) {
+        case kFullRecordButtonId:
+            StartScreenRecording();
+            return 0;
+        case kRegionRecordButtonId:
+            StartScreenRecording(RecordingMode::Region);
+            return 0;
+        case kWindowRecordButtonId:
+            StartScreenRecording(RecordingMode::Window);
+            return 0;
+        case kStopRecordButtonId:
+            StopScreenRecording();
+            return 0;
+        case kRecordingHotkeyButtonId:
+            BeginHotkeyRecording(HotkeySlot::ScreenRecording);
+            return 0;
         case kFullCaptureButtonId:
             CaptureDesktop();
             return 0;
@@ -1579,16 +1960,21 @@ LRESULT MainWindow::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) 
         RECT client_rect{};
         GetClientRect(window_, &client_rect);
         FillRect(hdc, &client_rect, GetSysColorBrush(COLOR_WINDOW));
+        title_bar_.Paint(hdc);
 
         EndPaint(window_, &paint_struct);
         return 0;
     }
 
     case WM_DESTROY:
-        if (ui_font_ != nullptr) {
+        KillTimer(window_, kRecordingTimerId);
+        recording_overlay_.Close();
+        recording_service_.Stop();
+        if (ui_font_ != nullptr && owns_ui_font_) {
             DeleteObject(ui_font_);
-            ui_font_ = nullptr;
         }
+        ui_font_ = nullptr;
+        owns_ui_font_ = false;
         tray_icon_controller_.RemoveIcon();
         UnregisterAllHotkeys();
         PostQuitMessage(0);
