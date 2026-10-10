@@ -1,4 +1,4 @@
-# 原生 Win32 截图工具
+# 原生 Win32 截图及录屏工具
 
 一个使用原生 Win32 界面和 Windows Graphics Capture (WGC) 采集的桌面截图、录屏程序，项目结构按职责拆分。
 
