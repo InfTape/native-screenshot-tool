@@ -70,6 +70,7 @@ private:
     void StartScreenRecording(RecordingMode mode = RecordingMode::Full);
     void StopScreenRecording();
     void PollScreenRecording();
+    common::Result<void> CopySavedRecording(const std::wstring& path, bool show_notification);
     void SaveCapture();
     void ClearCapture();
     void BeginHotkeyRecording(HotkeySlot slot);

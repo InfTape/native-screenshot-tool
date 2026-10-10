@@ -35,6 +35,7 @@ add_executable(NativeScreenshot WIN32
     src/capture/AutoSaveService.cpp
     src/capture/BitmapFileWriter.cpp
     src/capture/ImageClipboardWriter.cpp
+    src/capture/FileClipboardWriter.cpp
     src/capture/ImageFileWriter.cpp
     src/settings/SettingsRepository.cpp
     src/common/Direct2D.cpp
@@ -72,6 +73,7 @@ add_executable(NativeScreenshot WIN32
     include/capture/AutoSaveService.h
     include/capture/BitmapFileWriter.h
     include/capture/ImageClipboardWriter.h
+    include/capture/FileClipboardWriter.h
     include/capture/ImageFileFormat.h
     include/capture/ImageFileWriter.h
     include/settings/AppSettings.h
@@ -116,6 +118,19 @@ target_link_libraries(NativeScreenshot PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(FileClipboardIntegration
+        tests/FileClipboardIntegration.cpp
+        src/capture/FileClipboardWriter.cpp
+        src/common/Win32Error.cpp
+    )
+    target_include_directories(FileClipboardIntegration PRIVATE include)
+    target_compile_definitions(FileClipboardIntegration PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(FileClipboardIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
+    endif()
+    target_link_libraries(FileClipboardIntegration PRIVATE User32 Shell32)
+    add_test(NAME FileClipboardIntegration COMMAND FileClipboardIntegration)
+    set_tests_properties(FileClipboardIntegration PROPERTIES TIMEOUT 15)
     add_executable(GifRecordingIntegration tests/GifRecordingIntegration.cpp src/capture/GifRecordingWriter.cpp)
     target_include_directories(GifRecordingIntegration PRIVATE include)
     target_compile_definitions(GifRecordingIntegration PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)

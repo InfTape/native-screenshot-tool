@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "common/Win32Error.h"
+#include "capture/FileClipboardWriter.h"
 #include "hotkey/HotkeyDefinition.h"
 #include "ui/UiTypography.h"
 
@@ -1506,8 +1507,7 @@ void MainWindow::PollScreenRecording() {
         UpdateRecordingSettingsDisplay();
         UpdateActionState();
         if (result) {
-            UpdateStatus(L"录屏已保存到：" + result.Value());
-            tray_icon_controller_.ShowBalloon(L"录屏已保存", result.Value());
+            CopySavedRecording(result.Value(), true);
         } else {
             UpdateStatus(L"录屏保存失败，请检查磁盘空间及保存目录。");
             ShowFromTray();
@@ -1524,6 +1524,22 @@ void MainWindow::PollScreenRecording() {
                    capture::RecordingFormatName(settings_.recording_format));
         SetWindowTextW(recording_label_, text);
     }
+}
+
+common::Result<void> MainWindow::CopySavedRecording(const std::wstring& path, bool show_notification) {
+    const auto result = capture::FileClipboardWriter{}.CopyToClipboard(window_, path);
+    if (result) {
+        UpdateStatus(L"录屏已保存并复制到剪贴板：" + path);
+        if (show_notification) {
+            tray_icon_controller_.ShowBalloon(L"录屏已保存并复制", path);
+        }
+    } else {
+        UpdateStatus(L"录屏已保存到：" + path + L"，但复制到剪贴板失败。");
+        if (show_notification) {
+            tray_icon_controller_.ShowBalloon(L"录屏已保存，复制失败", path + L"\n" + result.Error());
+        }
+    }
+    return result;
 }
 
 void MainWindow::SaveCapture() {
@@ -1767,7 +1783,16 @@ void MainWindow::ExitApplication() {
         recording_overlay_.Close();
         UpdateStatus(L"正在结束录屏并保存视频…");
         auto result = recording_service_.Stop();
-        if (!result) MessageBoxW(window_, result.Error().c_str(), L"录屏保存失败", MB_OK | MB_ICONERROR);
+        if (result) {
+            const auto clipboard_result = CopySavedRecording(result.Value(), false);
+            if (!clipboard_result) {
+                const std::wstring message = L"录屏已保存到：" + result.Value() +
+                    L"\n但复制到剪贴板失败。\n" + clipboard_result.Error();
+                MessageBoxW(window_, message.c_str(), L"录屏已保存", MB_OK | MB_ICONWARNING);
+            }
+        } else {
+            MessageBoxW(window_, result.Error().c_str(), L"录屏保存失败", MB_OK | MB_ICONERROR);
+        }
     }
     exiting_ = true;
     hidden_to_tray_ = false;
