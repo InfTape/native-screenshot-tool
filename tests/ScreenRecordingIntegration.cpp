@@ -66,6 +66,12 @@ LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM w_param, LPARAM l
         return 0;
     }
     if (message == WM_APP + 12) { ShowWindow(window, SW_MINIMIZE); return 0; }
+    if (message == WM_APP + 14) {
+        SetWindowLongPtrW(window, GWLP_USERDATA, 1);
+        InvalidateRect(window, nullptr, FALSE);
+        UpdateWindow(window);
+        return 0;
+    }
     if (message == WM_APP + 13) {
         SetWindowPos(window, nullptr, 0, 0, 481, 241, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOMOVE);
         return 0;
@@ -117,12 +123,12 @@ struct WindowFixture {
     HWND window = nullptr;
     DWORD thread_id = 0;
     std::thread thread;
-    WindowFixture(int width = 321, int height = 241, bool quality = false) {
+    WindowFixture(int width = 321, int height = 241, bool quality = false, DWORD style = WS_POPUP) {
         std::promise<std::pair<HWND, DWORD>> ready;
         auto future = ready.get_future();
-        thread = std::thread([signal = std::move(ready), width, height, quality]() mutable {
+        thread = std::thread([signal = std::move(ready), width, height, quality, style]() mutable {
             HWND target = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
-                L"NativeScreenshot.RecordingTest", L"Window recording test", WS_POPUP,
+                L"NativeScreenshot.RecordingTest", L"Window recording test", style,
                 350, 60, width, height, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
             if (quality) SetWindowLongPtrW(target, GWLP_USERDATA, 3);
             ShowWindow(target, SW_SHOWNOACTIVATE);
@@ -342,6 +348,9 @@ int wmain(int argument_count, wchar_t** arguments) {
         Require(!recorder.Start(RECT{0, 0, 320, 240}, (root / L"invalid.bmp").wstring()), "reject invalid extension");
         Require(!recorder.Start(RECT{0, 0, 320, 240}, (root / L"missing" / L"video.mp4").wstring()), "report unavailable directory");
         Require(!recorder.IsActive(), "failed startup releases worker");
+        Require(!recorder.Start(RECT{-100000, -100000, -99680, -99760}, (root / L"outside-monitors.gif").wstring()),
+                "WGC rejects a region outside all monitors without falling back");
+        Require(!std::filesystem::exists(root / L"outside-monitors.gif"), "failed WGC initialization removes empty output");
         const auto existing = root / L"existing.mp4";
         { std::ofstream output(existing); output << "keep existing file"; }
         Require(!recorder.Start(RECT{0, 0, 320, 240}, existing.wstring()), "refuse overwriting files");
@@ -403,6 +412,16 @@ int wmain(int argument_count, wchar_t** arguments) {
         Require(static_cast<bool>(recorder.Start(RECT{0, 0, 2560, 1440}, native_resolution.wstring())), "capture larger area");
         Require(static_cast<bool>(recorder.Stop()), "stop native-resolution capture");
         ValidateVideo(native_resolution, 2560, 1440);
+        const RECT desktop{GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN)};
+        const auto full_desktop = root / L"full-desktop-wgc.mp4";
+        const auto full_started = recorder.Start(desktop, full_desktop.wstring());
+        if (!full_started) std::wcerr << full_started.Error() << '\n';
+        Require(static_cast<bool>(full_started), "WGC captures the complete virtual desktop");
+        Require(static_cast<bool>(recorder.Stop()), "save full desktop WGC recording");
+        ValidateVideo(full_desktop, (desktop.right - desktop.left + 1) & ~1,
+                                   (desktop.bottom - desktop.top + 1) & ~1);
         const auto shutdown = root / L"shutdown.mp4";
         {
             capture::ScreenRecordingService scope_recorder;
@@ -436,6 +455,18 @@ int wmain(int argument_count, wchar_t** arguments) {
         Require(static_cast<bool>(recorder.StartWindow(window_target.window, window_gif.wstring())), "window GIF recording");
         Require(static_cast<bool>(recorder.Stop()), "save window GIF");
         ValidateGif(window_gif, 321, 241);
+        {
+            WindowFixture framed_target(760, 540, false, WS_OVERLAPPEDWINDOW);
+            const auto framed_info = capture::WindowLocator{}.DescribeWindow(framed_target.window);
+            Require(framed_info.has_value(), "describe framed window");
+            const auto framed_gif = root / L"wgc-framed-window.gif";
+            const auto framed_started = recorder.StartWindow(framed_target.window, framed_gif.wstring());
+            if (!framed_started) std::wcerr << framed_started.Error() << '\n';
+            Require(static_cast<bool>(framed_started), "WGC captures standard caption and DWM window bounds");
+            Require(static_cast<bool>(recorder.Stop()), "save framed window GIF");
+            ValidateGif(framed_gif, framed_info->bounds.right - framed_info->bounds.left,
+                framed_info->bounds.bottom - framed_info->bounds.top);
+        }
         const auto resized_video = root / L"resize-ends-recording.mp4";
         Require(static_cast<bool>(recorder.StartWindow(window_target.window, resized_video.wstring())), "start fixed-size window recording");
         PostMessageW(window_target.window, WM_APP + 13, 0, 0);
@@ -445,11 +476,43 @@ int wmain(int argument_count, wchar_t** arguments) {
         Require(static_cast<bool>(recorder.Stop()), "save video on window size change");
         ValidateVideo(resized_video, 322, 242);
 
+        WindowFixture changing_target;
+        const auto changing_gif = root / L"wgc-live-updates.gif";
+        Require(static_cast<bool>(recorder.StartWindow(changing_target.window, changing_gif.wstring())),
+                "start WGC window live-update recording");
+        PostMessageW(changing_target.window, WM_APP + 14, 0, 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        Require(static_cast<bool>(recorder.Stop()), "save changed WGC frames");
+        {
+            ComPtr<IWICImagingFactory> factory;
+            Require(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&factory))), "create live-update GIF decoder");
+            ComPtr<IWICBitmapDecoder> decoder;
+            Require(SUCCEEDED(factory->CreateDecoderFromFilename(changing_gif.c_str(), nullptr, GENERIC_READ,
+                WICDecodeMetadataCacheOnLoad, &decoder)), "decode live-update GIF");
+            UINT frame_count = 0;
+            Require(SUCCEEDED(decoder->GetFrameCount(&frame_count)) && frame_count >= 2,
+                    "WGC captures changes after the first frame");
+            ComPtr<IWICBitmapFrameDecode> last_frame;
+            Require(SUCCEEDED(decoder->GetFrame(frame_count - 1, &last_frame)), "read last changed frame");
+            ComPtr<IWICBitmapSource> rgba;
+            Require(SUCCEEDED(WICConvertBitmapSource(GUID_WICPixelFormat32bppBGRA, last_frame.Get(), &rgba)),
+                    "convert changed GIF frame");
+            UINT frame_width = 0, frame_height = 0;
+            Require(SUCCEEDED(rgba->GetSize(&frame_width, &frame_height)), "changed frame dimensions");
+            std::vector<BYTE> changed_pixels(static_cast<size_t>(frame_width) * frame_height * 4);
+            Require(SUCCEEDED(rgba->CopyPixels(nullptr, frame_width * 4, static_cast<UINT>(changed_pixels.size()),
+                changed_pixels.data())), "read changed pixels");
+            const size_t middle = (static_cast<size_t>(frame_height / 2) * frame_width + frame_width / 2) * 4;
+            Require(changed_pixels[middle] > 240 && changed_pixels[middle + 1] < 16 && changed_pixels[middle + 2] < 16,
+                    "updated WGC window content is blue despite the occluding window");
+        }
+
         const auto quality_path = root / L"text-quality-4k.mp4";
         WindowFixture quality_target(3840, 2160, true);
         const auto quality_info = capture::WindowLocator{}.DescribeWindow(quality_target.window);
         Require(quality_info.has_value(), "describe quality fixture");
-        const auto quality_reference = capture::WindowCaptureService{}.CaptureWindow(*quality_info, nullptr);
+        const auto quality_reference = capture::WindowCaptureService{}.CaptureWindow(*quality_info);
         Require(static_cast<bool>(quality_reference), "capture lossless quality reference");
         const auto quality_started = recorder.StartWindow(quality_target.window, quality_path.wstring());
         if (!quality_started) std::wcerr << quality_started.Error() << '\n';

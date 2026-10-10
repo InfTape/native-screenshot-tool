@@ -1359,7 +1359,7 @@ bool MainWindow::CaptureWindow() {
     }
 
     auto captured_window =
-        window_capture_service_.CaptureWindow(*selected_window.Value(), &snapshot.Value());
+        window_capture_service_.CaptureWindow(*selected_window.Value());
     if (!captured_window) {
         UpdateStatus(L"窗口截图失败。");
         MessageBoxW(window_, captured_window.Error().c_str(), L"窗口采集失败", MB_OK | MB_ICONERROR);

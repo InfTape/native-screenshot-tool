@@ -1,11 +1,13 @@
 # 原生 Win32 截图工具
 
-一个基于原生 Win32 API 和 GDI 的桌面截图程序，项目结构按职责拆分，方便后续继续扩展截图模式、编码格式、标注能力和更多交互。
+一个使用原生 Win32 界面和 Windows Graphics Capture (WGC) 采集的桌面截图、录屏程序，项目结构按职责拆分。
 
 ## 当前能力
 
 - 支持全屏截图、选区截图、窗口截图
 - 支持多显示器虚拟桌面截图
+- 全屏、选区和窗口截图统一使用 WGC，不使用 GDI 采集或回退；截图不包含鼠标指针，PNG/BMP 保留原始尺寸，包括奇数宽高
+- 窗口截图直接采集目标 HWND，其他窗口遮挡不影响目标内容；PNG 保留窗口透明圆角
 - 进程已启用 DPI 感知，截图按显示器真实像素输出
 - 选区截图使用遮罩层框选，未选区域会被半透明覆盖
 - 选区遮罩层采用双缓冲与局部失效重绘，拖动框选时更平滑
@@ -15,6 +17,7 @@
 - 支持系统托盘常驻、托盘菜单触发截图、双击托盘恢复主窗口
 - 支持 PNG / BMP 保存，三种截图模式都可自动保存并复制到剪贴板
 - 支持全屏、选区和窗口录屏，可选择 H.264 MP4 或循环播放的 GIF，包含鼠标指针
+- 录屏统一使用 Windows Graphics Capture (WGC)，通过 D3D11 按原始像素裁剪、拼接跨屏选区；不使用 GDI 或 DXGI Desktop Duplication 回退
 - 录制时显示红色范围边框、范围外淡色遮罩及计时浮条，可直接停止并保存；遮罩不阻挡鼠标操作
 - 窗口录制跟随目标窗口移动，录制期间尺寸固定；窗口尺寸改变、最小化、隐藏或关闭后自动保存并结束
 - 录屏保留原始分辨率，不再缩小到 1080p；MP4 奇数宽高只在右侧或底部补 1 像素黑边，GIF 无需补边
@@ -61,13 +64,14 @@ cmake --build build --config Release
 build\Release\NativeScreenshot.exe
 ```
 
-需要 Visual Studio C++ 构建工具及 Windows SDK。录屏使用 Windows 自带的
+需要 Visual Studio C++ 构建工具及带 C++/WinRT 的 Windows SDK。程序要求 Windows 10 2004 或更新版本（推荐 Windows 11）及可用的 D3D11 显卡，使用 Windows 自带的 WGC 和
 [Media Foundation Sink Writer](https://learn.microsoft.com/en-us/windows/win32/medfound/using-the-sink-writer)，
 无需安装 FFmpeg；Windows N/KN 版本需要先安装媒体功能包。
 
 构建后可执行以下集成测试。测试会短暂显示一个颜色测试窗口，验证实际录制、
 H.264 解码、文字与单像素细节、画面方向、时长、中文路径、立即停止、重复录制、原始分辨率以及快捷键持久化：
 另外还会验证不同 DPI 下的字体、标题栏命中区域、托盘提示和菜单绘制，以及窗口截图编辑中的桌面遮罩、操作提示和导出像素。
+截图测试验证 WGC 全屏、选区、被遮挡窗口、单像素细线、奇数尺寸、PNG/BMP 无损保存、重复采集及失效目标报错。
 
 ```powershell
 ctest --test-dir build -C Release --output-on-failure
@@ -103,8 +107,10 @@ GIF 每帧最多 256 色，复杂渐变会有色阶损失，较长录制也可�
 录屏提示层使用 Windows 10 2004 及以上的
 [WDA_EXCLUDEFROMCAPTURE](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity)
 排除在视频之外。浮条可拖动；选区和窗口录制的范围外会显示可穿透点击的淡色遮罩。
-窗口录制使用原生 `PrintWindow`，遮挡窗口不会改变录制目标；部分游戏和硬件渲染窗口
-不支持此接口时，可使用选区录制采集屏幕上显示的内容。
+窗口录制通过 WGC 直接采集目标 HWND，遮挡窗口不会改变录制目标。
+WGC 不支持、采集失败或显卡设备失效时会明确报错，不回退到 GDI。
+系统可能显示 WGC 捕获边框。截图也使用同一 WGC 采集层；GDI 仅用于部分 Win32 界面和标注绘制，不再用于屏幕或窗口采集。
+当前采集使用 8 位 BGRA 的 SDR 输出，尚未实现 HDR 色调映射。
 
 ## 默认快捷键
 

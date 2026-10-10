@@ -29,6 +29,8 @@ add_executable(NativeScreenshot WIN32
     src/capture/CapturedImage.cpp
     src/capture/ScreenCaptureService.cpp
     src/capture/ScreenRecordingService.cpp
+    src/capture/WgcCaptureSource.cpp
+    src/capture/WgcScreenshotService.cpp
     src/capture/GifRecordingWriter.cpp
     src/capture/WindowLocator.cpp
     src/capture/WindowCaptureService.cpp
@@ -65,6 +67,8 @@ add_executable(NativeScreenshot WIN32
     include/capture/DesktopSnapshot.h
     include/capture/ScreenCaptureService.h
     include/capture/ScreenRecordingService.h
+    include/capture/WgcCaptureSource.h
+    include/capture/WgcScreenshotService.h
     include/capture/GifRecordingWriter.h
     include/capture/RecordingFileFormat.h
     include/capture/WindowInfo.h
@@ -104,6 +108,9 @@ target_link_libraries(NativeScreenshot PRIVATE
     Comctl32
     Comdlg32
     D2d1
+    D3d11
+    Dxgi
+    Windowsapp
     Dwmapi
     Gdi32
     Msimg32
@@ -174,8 +181,10 @@ if(BUILD_TESTING)
         tests/ScreenRecordingIntegration.cpp
         src/ui/RecordingOverlay.cpp
         src/capture/ScreenRecordingService.cpp
+        src/capture/WgcCaptureSource.cpp
         src/capture/GifRecordingWriter.cpp
         src/capture/WindowCaptureService.cpp
+        src/capture/WgcScreenshotService.cpp
         src/capture/WindowLocator.cpp
         src/capture/CapturedImage.cpp
         src/common/RectUtils.cpp
@@ -189,7 +198,30 @@ if(BUILD_TESTING)
     if(MSVC)
         target_compile_options(ScreenRecordingIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
     endif()
-    target_link_libraries(ScreenRecordingIntegration PRIVATE Mfplat Mfreadwrite Mfuuid Ole32 Gdi32 User32 Dwmapi Windowscodecs)
+    target_link_libraries(ScreenRecordingIntegration PRIVATE Mfplat Mfreadwrite Mfuuid Ole32 Gdi32 User32 Dwmapi Windowscodecs D3d11 Dxgi Windowsapp)
     add_test(NAME ScreenRecordingIntegration COMMAND ScreenRecordingIntegration)
     set_tests_properties(ScreenRecordingIntegration PROPERTIES TIMEOUT 60)
+
+    add_executable(ScreenshotIntegration
+        tests/ScreenshotIntegration.cpp
+        src/capture/CapturedImage.cpp
+        src/capture/ScreenCaptureService.cpp
+        src/capture/WindowCaptureService.cpp
+        src/capture/WindowLocator.cpp
+        src/capture/WgcScreenshotService.cpp
+        src/capture/WgcCaptureSource.cpp
+        src/capture/ImageFileWriter.cpp
+        src/capture/BitmapFileWriter.cpp
+        src/common/DpiAwareness.cpp
+        src/common/RectUtils.cpp
+        src/common/Win32Error.cpp
+    )
+    target_include_directories(ScreenshotIntegration PRIVATE include)
+    target_compile_definitions(ScreenshotIntegration PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(ScreenshotIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
+    endif()
+    target_link_libraries(ScreenshotIntegration PRIVATE D3d11 Dxgi Windowsapp Dwmapi Gdi32 User32 Ole32 Windowscodecs)
+    add_test(NAME ScreenshotIntegration COMMAND ScreenshotIntegration)
+    set_tests_properties(ScreenshotIntegration PROPERTIES TIMEOUT 30)
 endif()

@@ -8,6 +8,7 @@
 #include <icodecapi.h>
 #include <wrl/client.h>
 #include <dwmapi.h>
+#include <winrt/base.h>
 
 #include <algorithm>
 #include <chrono>
@@ -17,9 +18,8 @@
 #include <memory>
 #include <stdexcept>
 
-#include "common/GdiResources.h"
 #include "common/Win32Error.h"
-#include "capture/WindowCaptureService.h"
+#include "capture/WgcCaptureSource.h"
 #include "capture/WindowLocator.h"
 #include "capture/GifRecordingWriter.h"
 #include "capture/RecordingFileFormat.h"
@@ -41,7 +41,12 @@ struct MediaRuntime {
     bool media_initialized = false;
     ~MediaRuntime() {
         if (media_initialized) MFShutdown();
-        if (com_initialized) CoUninitialize();
+        if (com_initialized) {
+            // Recording workers are recreated between sessions. Release cached
+            // WinRT factories before the last RoInitialize apartment shuts down.
+            winrt::clear_factory_cache();
+            winrt::uninit_apartment();
+        }
     }
 };
 
@@ -76,28 +81,6 @@ void ConfigureQuality(IMFSinkWriter* writer, DWORD stream_index) {
     cabac.boolVal = VARIANT_TRUE;
     codec->SetValue(&CODECAPI_AVEncH264CABACEnable, &cabac);
 }
-
-void DrawCursor(HDC dc, const RECT& region, int width, int height) {
-    CURSORINFO cursor{sizeof(CURSORINFO)};
-    if (!GetCursorInfo(&cursor) || !(cursor.flags & CURSOR_SHOWING)) return;
-    ICONINFO icon{};
-    if (!GetIconInfo(cursor.hCursor, &icon)) return;
-    common::UniqueBitmap mask(icon.hbmMask);
-    common::UniqueBitmap color(icon.hbmColor);
-    const double scale_x = static_cast<double>(width) / (region.right - region.left);
-    const double scale_y = static_cast<double>(height) / (region.bottom - region.top);
-    BITMAP dimensions{};
-    GetObjectW(icon.hbmColor ? icon.hbmColor : icon.hbmMask, sizeof(dimensions), &dimensions);
-    const int cursor_height = icon.hbmColor ? dimensions.bmHeight : dimensions.bmHeight / 2;
-    DrawIconEx(dc,
-               static_cast<int>((cursor.ptScreenPos.x - region.left - static_cast<LONG>(icon.xHotspot)) * scale_x),
-               static_cast<int>((cursor.ptScreenPos.y - region.top - static_cast<LONG>(icon.yHotspot)) * scale_y),
-               cursor.hCursor,
-               std::max(1, static_cast<int>(dimensions.bmWidth * scale_x)),
-               std::max(1, static_cast<int>(cursor_height * scale_y)),
-               0, nullptr, DI_NORMAL);
-}
-
 }  // namespace
 
 namespace capture {
@@ -192,7 +175,7 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
             std::chrono::steady_clock::now() - started).count() / 100;
     };
     try {
-        Check(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
         runtime.com_initialized = true;
         stage = L"初始化 Windows 媒体组件";
         Check(MFStartup(MF_VERSION));
@@ -204,23 +187,6 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
         // discarding a source row/column, so every captured pixel is preserved.
         const int width = is_gif ? source_width : (source_width + 1) & ~1;
         const int height = is_gif ? source_height : (source_height + 1) & ~1;
-
-        common::WindowDcHandle screen(nullptr, GetDC(nullptr));
-        common::UniqueDc frame_dc(CreateCompatibleDC(screen.Get()));
-        BITMAPINFO info{};
-        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        info.bmiHeader.biWidth = width;
-        // RGB32 in Media Foundation uses bottom-up DIB memory.
-        info.bmiHeader.biHeight = height;
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        void* pixels = nullptr;
-        common::UniqueBitmap bitmap(CreateDIBSection(screen.Get(), &info, DIB_RGB_COLORS,
-                                                     &pixels, nullptr, 0));
-        if (!screen || !frame_dc || !bitmap || !pixels) Check(E_OUTOFMEMORY);
-        common::ScopedSelectObject selected(frame_dc.Get(), bitmap.Get());
-        if (!selected.IsValid()) Check(E_FAIL);
-        PatBlt(frame_dc.Get(), 0, 0, width, height, BLACKNESS);
 
         // Reserve a unique file instead of overwriting an existing recording.
         stage = L"创建录屏文件";
@@ -259,7 +225,11 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
             Check(writer->BeginWriting());
             writing = true;
         }
-        stage = L"采集与编码画面";
+        stage = L"初始化 WGC 采集";
+        WgcCaptureSource source;
+        source.Initialize(region, window, width, height);
+        std::vector<BYTE> pixels;
+        stage = L"WGC 采集与编码画面";
 
         const DWORD byte_count = static_cast<DWORD>(static_cast<unsigned long long>(width) * height * 4);
         started = std::chrono::steady_clock::now();
@@ -277,47 +247,20 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
                 if (region.right - region.left != source_width ||
                     region.bottom - region.top != source_height) break;
                 { const std::lock_guard lock(region_mutex_); current_region_ = region; }
-                const auto captured = WindowCaptureService{}.CaptureWindow(*target, nullptr);
-                if (!IsWindow(window) || !IsWindowVisible(window) || IsIconic(window)) break;
-                if (!captured) Check(E_FAIL);
-                const auto& image = captured.Value();
-                if (image.Width() != source_width || image.Height() != source_height) break;
-                const auto bitmap_info = image.CreateBitmapInfo();
-                if (!SetDIBitsToDevice(frame_dc.Get(), 0, 0, source_width, source_height,
-                    0, 0, 0, source_height, image.Pixels().data(),
-                    &bitmap_info, DIB_RGB_COLORS)) Check(E_FAIL);
-                CURSORINFO cursor{sizeof(cursor)};
-                if (GetCursorInfo(&cursor) && PtInRect(&region, cursor.ptScreenPos) &&
-                    GetAncestor(WindowFromPoint(cursor.ptScreenPos), GA_ROOT) == window) {
-                    SaveDC(frame_dc.Get());
-                    IntersectClipRect(frame_dc.Get(), 0, 0, source_width, source_height);
-                    DrawCursor(frame_dc.Get(), region, source_width, source_height);
-                    RestoreDC(frame_dc.Get(), -1);
-                }
-            } else {
-                if (!BitBlt(frame_dc.Get(), 0, 0, source_width, source_height, screen.Get(), region.left,
-                            region.top, SRCCOPY | CAPTUREBLT)) {
-                    const DWORD error = GetLastError();
-                    Check(error ? HRESULT_FROM_WIN32(error) : E_FAIL);
-                }
-                SaveDC(frame_dc.Get());
-                IntersectClipRect(frame_dc.Get(), 0, 0, source_width, source_height);
-                DrawCursor(frame_dc.Get(), region, source_width, source_height);
-                RestoreDC(frame_dc.Get(), -1);
             }
-            GdiFlush();
+            if (!source.ReadFrame(pixels)) break;
             // Wall-clock timestamps keep slow capture/encoding from speeding up playback.
             const LONGLONG elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 captured_at - started).count() / 100;
             const LONGLONG time = previous_time < 0 ? 0 : std::max(previous_time + 1, elapsed);
             if (is_gif) {
-                gif_writer->AddFrame(static_cast<const BYTE*>(pixels), time);
+                gif_writer->AddFrame(pixels.data(), time);
             } else {
                 ComPtr<IMFMediaBuffer> buffer;
                 Check(MFCreateMemoryBuffer(byte_count, &buffer));
                 BYTE* destination = nullptr;
                 Check(buffer->Lock(&destination, nullptr, nullptr));
-                std::memcpy(destination, pixels, byte_count);
+                std::memcpy(destination, pixels.data(), byte_count);
                 Check(buffer->Unlock());
                 Check(buffer->SetCurrentLength(byte_count));
                 ComPtr<IMFSample> sample;
@@ -344,6 +287,9 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
             writing = false;
             Check(finalized);
         }
+    } catch (const winrt::hresult_error& error) {
+        error_ = std::wstring(L"录屏失败（") + stage + L"）：" + error.message().c_str() +
+                 L"\n文件：" + path + L"\n请检查录制目标、系统支持及显卡驱动。";
     } catch (HRESULT result) {
         error_ = std::wstring(L"录屏失败（") + stage + L"）：" +
                  common::GetLastErrorMessage(static_cast<DWORD>(result)) +
