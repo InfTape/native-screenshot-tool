@@ -45,6 +45,7 @@ struct RegionSelectionRenderModel {
 
     editing::MarkupTool active_tool = editing::MarkupTool::Select;
     bool can_undo = false;
+    bool can_copy_text = false;
 };
 
 class RegionSelectionRenderer {
@@ -61,7 +62,7 @@ public:
 
     void PaintBaseImage(HDC hdc, const capture::CapturedImage& image) const;
     void DrawInstructions(HDC hdc, const RECT& bounds, bool start_with_full_selection,
-                          bool for_recording, UINT dpi) const;
+                          bool for_recording, UINT dpi, bool ocr_mode = false) const;
     void PaintOverlay(HDC hdc,
                       const RECT& client_rect,
                       const RegionSelectionRenderModel& model,

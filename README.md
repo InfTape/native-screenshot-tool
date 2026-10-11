@@ -16,6 +16,7 @@
 - 三种截图模式都支持独立的全局快捷键，并持久化保存
 - 支持系统托盘常驻、托盘菜单触发截图、双击托盘恢复主窗口
 - 支持 PNG / BMP 保存，三种截图模式都可自动保存并复制到剪贴板
+- 选区、窗口截图的编辑浮条支持 OCR，离线识别当前选区文字；可直接在截图上跨行拖选、双击选词、Ctrl+A 全选和 Ctrl+C 复制
 - 支持全屏、选区和窗口录屏，可选择 H.264 MP4 或循环播放的 GIF，包含鼠标指针
 - 录屏统一使用 Windows Graphics Capture (WGC)，通过 D3D11 按原始像素裁剪、拼接跨屏选区；不使用 GDI 或 DXGI Desktop Duplication 回退
 - 录制时显示红色范围边框、范围外淡色遮罩及计时浮条，可直接停止并保存；遮罩不阻挡鼠标操作
@@ -78,6 +79,30 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 仅构建程序时，可在配置命令后追加 `-DBUILD_TESTING=OFF`。
+
+## OCR 使用
+
+1. 进行选区截图或窗口截图，调整到需要识别的区域，在浮动编辑条上点击 **OCR**。
+2. 在当前截图上后台识别，不会打开单独结果窗口。完成后直接拖动选中文字，蓝色高亮显示选择范围。
+3. 支持跨行拖选、双击选词、Ctrl+A 全选；按 Ctrl+C、点击浮条“复制”或右键菜单复制选中文字。
+   复制后仍保留截图，可继续选择。浮条“返回”恢复编辑，“关闭” / Enter / Esc 退出文字选择。
+   没有文字或缺少组件时在截图内显示提示。高亮不会写入截图像素。
+
+OCR 使用本机 Windows 照片 / 截图工具附带的 OneOCR 引擎。程序优先查找已安装的照片包，
+也支持截图工具中的组件；首次使用会将 `oneocr.dll`、`oneocr.onemodel`、`onnxruntime.dll`
+复制到 `%LOCALAPPDATA%\NativeScreenshot\OneOCR\包完整名称\` 缓存，约 120 MB，
+无需修改 WindowsApps 权限。包更新后会使用对应新版本缓存，旧缓存可在程序退出后删除。
+也可在程序旁的 `ocr\` 目录提供匹配的三个文件。
+不需要 Python、联网识别或 NPU；本仓库不附带微软 DLL 和模型文件。
+
+OneOCR 是应用内部接口，后续更新可能改变接口或模型兼容性。
+调用参数参考 [AuroraWright/oneocr](https://github.com/AuroraWright/oneocr/blob/main/oneocr.py)
+和 [b1tg/win11-oneocr](https://github.com/b1tg/win11-oneocr/blob/master/ocr.cpp)。
+文字与坐标对齐、拖选及高亮的思路参考 [xland/ImageReader](https://github.com/xland/ImageReader)，
+由 [xland/ScreenCapture](https://github.com/xland/ScreenCapture) 调用。当前实现直接在原生截图浮层内交互。
+`OneOcrIntegration` 测试需要本机安装包含 OneOCR 的照片 / 截图工具，
+验证中文英文识别、引擎复用、文字坐标、跨行及反向拖选、Unicode 复制和异步关闭；使用独立窗口站，
+不会覆盖用户的剪贴板。
 
 ## 录屏使用
 

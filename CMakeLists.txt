@@ -21,6 +21,9 @@ add_executable(NativeScreenshot WIN32
     src/ui/RegionSelectionRenderer.cpp
     src/ui/SelectionEditToolbar.cpp
     src/ui/SelectionSession.cpp
+    src/ui/OcrTextSelection.cpp
+    src/ui/RegionSelectionOverlay.Ocr.cpp
+    src/ocr/OneOcrService.cpp
     src/ui/WindowSelectionOverlay.cpp
     src/ui/TrayIconController.cpp
     src/editing/ImageMarkupService.cpp
@@ -57,6 +60,8 @@ add_executable(NativeScreenshot WIN32
     include/ui/RegionSelectionRenderer.h
     include/ui/SelectionEditToolbar.h
     include/ui/SelectionSession.h
+    include/ui/OcrTextSelection.h
+    include/ocr/OneOcrService.h
     include/ui/WindowSelectionOverlay.h
     include/ui/TrayIconController.h
     include/editing/ImageMarkupService.h
@@ -125,6 +130,36 @@ target_link_libraries(NativeScreenshot PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(OneOcrIntegration
+        tests/OneOcrIntegration.cpp
+        src/ocr/OneOcrService.cpp
+        src/ui/OcrTextSelection.cpp
+        src/ui/RegionSelectionOverlay.Ocr.cpp
+        src/ui/RegionSelectionOverlay.cpp
+        src/ui/RegionSelectionOverlay.Input.cpp
+        src/ui/RegionSelectionOverlay.Geometry.cpp
+        src/ui/RegionSelectionBuffers.cpp
+        src/ui/RegionSelectionRenderer.cpp
+        src/ui/WindowEditingCanvas.cpp
+        src/ui/SelectionSession.cpp
+        src/ui/SelectionEditToolbar.cpp
+        src/ui/OverlayPrimitives.cpp
+        src/editing/ImageMarkupService.cpp
+        src/common/Direct2D.cpp
+        src/capture/CapturedImage.cpp
+        src/common/RectUtils.cpp
+        src/common/DpiAwareness.cpp
+        src/common/Win32Error.cpp
+    )
+    target_include_directories(OneOcrIntegration PRIVATE include)
+    target_compile_definitions(OneOcrIntegration PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(OneOcrIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
+    endif()
+    target_link_libraries(OneOcrIntegration PRIVATE Windowsapp Ole32 Shell32 Gdi32 User32 Msimg32 D2d1)
+    add_test(NAME OneOcrIntegration COMMAND OneOcrIntegration)
+    set_tests_properties(OneOcrIntegration PROPERTIES TIMEOUT 45)
+
     add_executable(FileClipboardIntegration
         tests/FileClipboardIntegration.cpp
         src/capture/FileClipboardWriter.cpp
@@ -149,6 +184,9 @@ if(BUILD_TESTING)
     set_tests_properties(GifRecordingIntegration PROPERTIES TIMEOUT 30)
     add_executable(UiTypographyIntegration
         tests/UiTypographyIntegration.cpp
+        src/ocr/OneOcrService.cpp
+        src/ui/OcrTextSelection.cpp
+        src/ui/RegionSelectionOverlay.Ocr.cpp
         src/ui/OverlayPrimitives.cpp
         src/ui/WindowEditingCanvas.cpp
         src/ui/RegionSelectionBuffers.cpp
@@ -173,7 +211,7 @@ if(BUILD_TESTING)
     if(MSVC)
         target_compile_options(UiTypographyIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
     endif()
-    target_link_libraries(UiTypographyIntegration PRIVATE Comctl32 Shell32 Gdi32 User32 Msimg32 D2d1 Ole32)
+    target_link_libraries(UiTypographyIntegration PRIVATE Comctl32 Shell32 Gdi32 User32 Msimg32 D2d1 Ole32 Windowsapp)
     add_test(NAME UiTypographyIntegration COMMAND UiTypographyIntegration)
     set_tests_properties(UiTypographyIntegration PROPERTIES TIMEOUT 15)
 

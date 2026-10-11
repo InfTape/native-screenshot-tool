@@ -28,8 +28,9 @@ bool PointInRectInclusive(const RECT& rect, const POINT& point) {
            point.y < rect.bottom;
 }
 
-bool IsButtonEnabled(const ui::SelectionToolbarButtonId& button_id, bool can_undo) {
-    return !button_id.IsCommand(ui::SelectionToolbarCommand::Undo) || can_undo;
+bool IsButtonEnabled(const ui::SelectionToolbarButtonId& button_id, bool can_undo, bool can_copy_text) {
+    return (!button_id.IsCommand(ui::SelectionToolbarCommand::Undo) || can_undo) &&
+           (!button_id.IsCommand(ui::SelectionToolbarCommand::CopyText) || can_copy_text);
 }
 
 }  // namespace
@@ -37,7 +38,8 @@ bool IsButtonEnabled(const ui::SelectionToolbarButtonId& button_id, bool can_und
 namespace ui {
 
 void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& client_bounds,
-                                       bool for_recording, UINT dpi) {
+                                       bool for_recording, UINT dpi, bool ocr_mode) {
+    ocr_mode_ = ocr_mode;
     dpi = dpi ? dpi : 96;
     if (!font_ || dpi_ != dpi) {
         font_.Reset(CreateUiFont(dpi));
@@ -83,6 +85,7 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
         SelectionToolbarButtonId::Tool(editing::MarkupTool::Arrow),
         SelectionToolbarButtonId::Tool(editing::MarkupTool::Brush),
         SelectionToolbarButtonId::Command(SelectionToolbarCommand::Undo),
+        SelectionToolbarButtonId::Command(SelectionToolbarCommand::Ocr),
         SelectionToolbarButtonId::Command(SelectionToolbarCommand::Confirm),
         SelectionToolbarButtonId::Command(SelectionToolbarCommand::Cancel),
     };
@@ -93,15 +96,22 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
         L"箭头",
         L"画笔",
         L"撤销",
+        L"OCR",
         L"完成",
         L"取消",
     };
 
     int button_left = bounds_.left + padding;
     for (int index = 0; index < button_count; ++index) {
-        const int source_index = for_recording && index > 0 ? index + 5 : index;
+        const int source_index = for_recording && index > 0 ? index + kButtonCount - 3 : index;
         buttons_[index].id = kButtonIds[source_index];
         buttons_[index].label = for_recording && index == 1 ? L"开始录制" : kLabels[source_index];
+        if (ocr_mode && source_index == 5) {
+            buttons_[index].id = SelectionToolbarButtonId::Command(SelectionToolbarCommand::CopyText);
+            buttons_[index].label = L"复制";
+        }
+        if (ocr_mode && source_index == 6) buttons_[index].label = L"返回";
+        if (ocr_mode && source_index == 7) buttons_[index].label = L"关闭";
         buttons_[index].bounds =
             CreateRect(button_left, bounds_.top + padding, button_width, button_height);
         button_left += button_width + spacing;
@@ -140,7 +150,7 @@ SelectionToolbarButtonId SelectionEditToolbar::HitTest(const POINT& point) const
     return SelectionToolbarButtonId::None();
 }
 
-void SelectionEditToolbar::Paint(HDC hdc, editing::MarkupTool active_tool, bool can_undo) const {
+void SelectionEditToolbar::Paint(HDC hdc, editing::MarkupTool active_tool, bool can_undo, bool can_copy_text) const {
     if (!visible_) {
         return;
     }
@@ -160,9 +170,10 @@ void SelectionEditToolbar::Paint(HDC hdc, editing::MarkupTool active_tool, bool 
 
     for (const auto& button : buttons_) {
         if (button.id.IsNone()) continue;
-        const bool is_active = button.id.IsTool() && button.id.tool == active_tool;
+        const bool is_active = ocr_mode_ ? button.id.IsCommand(SelectionToolbarCommand::Ocr) :
+                               button.id.IsTool() && button.id.tool == active_tool;
         const bool is_primary_action = button.id.IsCommand(SelectionToolbarCommand::Confirm);
-        const bool is_enabled = IsButtonEnabled(button.id, can_undo);
+        const bool is_enabled = IsButtonEnabled(button.id, can_undo, can_copy_text);
         const COLORREF fill_color = !is_enabled
                                         ? kToolbarDisabled
                                         : (is_active ? kToolbarActive

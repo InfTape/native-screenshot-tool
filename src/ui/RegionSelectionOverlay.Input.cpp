@@ -46,6 +46,10 @@ std::optional<ui::SelectionSession::InteractionMode> PreviewInteractionModeForTo
 namespace ui {
 
 bool RegionSelectionOverlay::HandleSetCursor() const {
+    if (ocr_menu_open_) {
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        return true;
+    }
     if (window_ != nullptr) {
         POINT cursor_point{};
         GetCursorPos(&cursor_point);
@@ -56,6 +60,10 @@ bool RegionSelectionOverlay::HandleSetCursor() const {
             return true;
         }
 
+        if (ocr_mode_) {
+            SetCursor(LoadCursorW(nullptr, ocr_selection_.HitText(OcrPoint(cursor_point)) ? IDC_IBEAM : IDC_ARROW));
+            return true;
+        }
         if (session_.active_tool == EditTool::Select && HasSelection()) {
             const SelectionAdjustHandle handle = session_.interaction_mode == InteractionMode::Adjusting
                                                      ? session_.adjust_handle
@@ -97,6 +105,15 @@ bool RegionSelectionOverlay::HandleKeyDown(WPARAM w_param) {
         return true;
     }
 
+    if (ocr_mode_) {
+        if (GetKeyState(VK_CONTROL) < 0 && w_param == 'A') {
+            ocr_selection_.SelectAll(); RefreshOcrSelection(); return true;
+        }
+        if (GetKeyState(VK_CONTROL) < 0 && w_param == 'C') { CopyOcrText(); return true; }
+        if (w_param == VK_RETURN) { FinishSelection(true); return true; }
+        return true;
+    }
+
     if ((GetKeyState(VK_CONTROL) < 0) && (w_param == 'Z') && CanUndoLastEdit() &&
         session_.interaction_mode != InteractionMode::Selecting) {
         ResetInteraction();
@@ -114,6 +131,7 @@ bool RegionSelectionOverlay::HandleKeyDown(WPARAM w_param) {
 
 bool RegionSelectionOverlay::HandleToolbarAction(SelectionToolbarButtonId toolbar_action) {
     if (toolbar_action.IsTool()) {
+        if (ocr_mode_) LeaveOcr();
         SetActiveTool(toolbar_action.tool);
         return true;
     }
@@ -123,6 +141,17 @@ bool RegionSelectionOverlay::HandleToolbarAction(SelectionToolbarButtonId toolba
             ResetInteraction();
             UndoLastEdit();
         }
+        return true;
+    }
+
+    if (toolbar_action.IsCommand(SelectionToolbarCommand::Ocr) && !for_recording_ && HasSelection()) {
+        if (ocr_mode_) LeaveOcr();
+        else StartOcr();
+        return true;
+    }
+
+    if (toolbar_action.IsCommand(SelectionToolbarCommand::CopyText)) {
+        CopyOcrText();
         return true;
     }
 
@@ -142,6 +171,16 @@ bool RegionSelectionOverlay::HandleToolbarAction(SelectionToolbarButtonId toolba
 void RegionSelectionOverlay::HandleLeftButtonDown(const POINT& point) {
     const SelectionToolbarButtonId toolbar_action = toolbar_.HitTest(point);
     if (!toolbar_action.IsNone() && HandleToolbarAction(toolbar_action)) {
+        return;
+    }
+
+    if (ocr_mode_) {
+        if (!ocr_busy_ && PtInRect(&session_.selection, point)) {
+            ocr_selection_.BeginSelection(OcrPoint(point));
+            ocr_dragging_ = ocr_selection_.HitText(OcrPoint(point));
+            if (ocr_dragging_) SetCapture(window_);
+            RefreshOcrSelection();
+        }
         return;
     }
 
@@ -196,6 +235,13 @@ void RegionSelectionOverlay::HandleLeftButtonDown(const POINT& point) {
 }
 
 void RegionSelectionOverlay::HandleMouseMove(const POINT& point) {
+    if (ocr_mode_) {
+        if (ocr_dragging_) {
+            ocr_selection_.ExtendSelection(OcrPoint(point));
+            RefreshOcrSelection();
+        }
+        return;
+    }
     if (session_.interaction_mode == InteractionMode::Selecting) {
         const RECT previous_selection = CurrentSelection();
         const bool previous_has_selection = HasSelection();
@@ -238,6 +284,15 @@ void RegionSelectionOverlay::HandleMouseMove(const POINT& point) {
 }
 
 void RegionSelectionOverlay::HandleLeftButtonUp(const POINT& point) {
+    if (ocr_mode_) {
+        if (ocr_dragging_) {
+            ocr_selection_.ExtendSelection(OcrPoint(point));
+            ocr_dragging_ = false;
+            if (GetCapture() == window_) ReleaseCapture();
+            RefreshOcrSelection();
+        }
+        return;
+    }
     if (session_.interaction_mode == InteractionMode::Selecting) {
         session_.current = point;
         const RECT final_selection = CurrentSelection();

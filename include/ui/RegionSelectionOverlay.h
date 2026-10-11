@@ -5,6 +5,8 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <future>
+#include <cstdint>
 
 #include "capture/CapturedImage.h"
 #include "capture/DesktopSnapshot.h"
@@ -15,12 +17,14 @@
 #include "ui/RegionSelectionRenderer.h"
 #include "ui/SelectionEditToolbar.h"
 #include "ui/SelectionSession.h"
+#include "ui/OcrTextSelection.h"
 
 namespace ui {
 
 struct RegionSelectionResult {
     RECT region{};
     capture::CapturedImage image;
+    bool text_only = false;
 };
 
 class RegionSelectionOverlay {
@@ -105,6 +109,17 @@ private:
     void HandleMouseMove(const POINT& point);
     void HandleLeftButtonUp(const POINT& point);
     void ShowEditError(const std::wstring& error_message) const;
+    void StartOcr();
+    void LeaveOcr();
+    void PollOcr();
+    void LaunchOcr();
+    void RefreshOcrSelection();
+    void CopyOcrText();
+    void ShowOcrContextMenu(POINT screen_point);
+    bool MeasureOcrMenuItem(MEASUREITEMSTRUCT& item) const;
+    bool DrawOcrMenuItem(const DRAWITEMSTRUCT& item) const;
+    void PaintOcrSelection(HDC hdc, const RECT& client_rect) const;
+    ocr::Point OcrPoint(const POINT& point) const;
 
     void PaintBaseImage(HDC hdc) const;
     void PaintOverlay(HDC hdc, const RECT& client_rect) const;
@@ -121,6 +136,20 @@ private:
     SelectionEditToolbar toolbar_;
     bool for_recording_ = false;
     bool window_editing_ = false;
+    bool text_only_ = false;
+    bool ocr_mode_ = false, ocr_busy_ = false, ocr_dragging_ = false;
+    bool ocr_menu_open_ = false;
+    bool ocr_launch_pending_ = false;
+    std::wstring ocr_status_;
+    common::UniqueGdiObject<HFONT> ocr_menu_font_;
+    UINT ocr_menu_dpi_ = 96;
+    OcrTextSelection ocr_selection_;
+    std::uint64_t ocr_generation_ = 0, ocr_job_generation_ = 0;
+    static constexpr UINT_PTR kOcrPollTimer = 0x4F43;
+    // The future is destroyed before the engine; closing an overlay invalidates
+    // the request without blocking its UI or touching the worker's saved image.
+    ocr::OneOcrService ocr_service_;
+    std::future<common::Result<ocr::Document>> ocr_future_;
     RECT instruction_area_{};
     RegionSelectionBuffers buffers_;
     RegionSelectionRenderer renderer_;

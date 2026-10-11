@@ -13,6 +13,8 @@ namespace ui {
 enum class SelectionToolbarCommand {
     None,
     Undo,
+    Ocr,
+    CopyText,
     Confirm,
     Cancel,
 };
@@ -62,13 +64,13 @@ struct SelectionToolbarButtonId {
 class SelectionEditToolbar {
 public:
     void UpdateLayout(const RECT& selection, const RECT& client_bounds,
-                      bool for_recording = false, UINT dpi = 96);
+                      bool for_recording = false, UINT dpi = 96, bool ocr_mode = false);
     void Hide();
 
     bool IsVisible() const;
     const RECT& Bounds() const;
     SelectionToolbarButtonId HitTest(const POINT& point) const;
-    void Paint(HDC hdc, editing::MarkupTool active_tool, bool can_undo) const;
+    void Paint(HDC hdc, editing::MarkupTool active_tool, bool can_undo, bool can_copy_text = false) const;
 
 private:
     struct Button {
@@ -77,11 +79,12 @@ private:
         const wchar_t* label = L"";
     };
 
-    static constexpr int kButtonCount = 8;
+    static constexpr int kButtonCount = 9;
 
     std::array<Button, kButtonCount> buttons_{};
     RECT bounds_{};
     bool visible_ = false;
+    bool ocr_mode_ = false;
     UINT dpi_ = 96;
     common::UniqueGdiObject<HFONT> font_;
 };

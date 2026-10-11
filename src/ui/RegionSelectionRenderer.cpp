@@ -71,7 +71,7 @@ void RegionSelectionRenderer::PaintBaseImage(HDC hdc, const capture::CapturedIma
 
 void RegionSelectionRenderer::DrawInstructions(HDC hdc,
                                                const RECT& bounds,
-                                               bool start_with_full_selection, bool for_recording, UINT dpi) const {
+                                               bool start_with_full_selection, bool for_recording, UINT dpi, bool ocr_mode) const {
     const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
     RECT instruction_rect = bounds;
     instruction_rect.left += scale(kInstructionMargin);
@@ -90,6 +90,12 @@ void RegionSelectionRenderer::DrawInstructions(HDC hdc,
 
     RECT text_rect = instruction_rect;
     InflateRect(&text_rect, -scale(12), -scale(8));
+    if (ocr_mode) {
+        DrawTextBlock(hdc, text_rect,
+            L"直接拖动选择截图上的文字，双击选择词语。Ctrl+A 全选，Ctrl+C 或右键复制。点击“返回”继续编辑，Esc 退出。",
+            DT_LEFT | DT_VCENTER | DT_WORDBREAK, panel_style.text_color, dpi);
+        return;
+    }
     if (for_recording) {
         DrawTextBlock(hdc, text_rect,
                       L"拖动鼠标框选录屏区域，可移动或调整范围。按 Enter 或点击“开始录制”开始，按 Esc 或右键取消。",
@@ -139,7 +145,7 @@ void RegionSelectionRenderer::PaintOverlay(HDC hdc,
         DrawBrushPreview(hdc, client_rect, model.brush_preview);
     }
 
-    toolbar.Paint(hdc, model.active_tool, model.can_undo);
+    toolbar.Paint(hdc, model.active_tool, model.can_undo, model.can_copy_text);
 }
 
 void RegionSelectionRenderer::DrawSelectionBorder(HDC hdc, const RECT& selection) const {
@@ -170,7 +176,7 @@ void RegionSelectionRenderer::DrawSelectionLabel(HDC hdc,
     RECT text_rect = label_rect;
     InflateRect(&text_rect, -MulDiv(8, dpi, 96), -MulDiv(6, dpi, 96));
     DrawTextBlock(
-        hdc, text_rect, text, DT_LEFT | DT_VCENTER | DT_SINGLELINE, panel_style.text_color, dpi);
+        hdc, text_rect, text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX, panel_style.text_color, dpi);
 }
 
 void RegionSelectionRenderer::DrawRectanglePreview(HDC hdc,

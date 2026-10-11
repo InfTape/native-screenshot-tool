@@ -134,12 +134,19 @@ RECT RegionSelectionOverlay::SelectionLabelRect(const RECT& selection, const REC
     RECT label_rect{
         selection.left,
         std::max(client_rect.top, selection.top - scale(32)),
-        selection.left + scale(180),
+        selection.left + scale(ocr_mode_ ? 430 : 180),
         selection.top,
     };
     if (common::RectHeight(label_rect) < scale(24)) {
         label_rect.top = selection.bottom;
         label_rect.bottom = std::min(client_rect.bottom, selection.bottom + scale(32));
+    }
+    if (ocr_mode_ && common::RectHeight(label_rect) < scale(24)) {
+        // Full-screen selections still need a visible progress/error banner.
+        label_rect.left = client_rect.left + scale(16);
+        label_rect.right = label_rect.left + scale(430);
+        label_rect.top = std::min(client_rect.top + scale(80), client_rect.bottom - scale(32));
+        label_rect.bottom = label_rect.top + scale(32);
     }
 
     label_rect.left = std::clamp(label_rect.left, client_rect.left, client_rect.right);

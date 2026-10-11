@@ -76,6 +76,9 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
     instruction_area_ = RECT{};
 
     const auto cleanup = [this]() {
+        ++ocr_generation_;
+        ocr_mode_ = ocr_busy_ = ocr_launch_pending_ = ocr_dragging_ = false;
+        ocr_selection_.Clear();
         if (window_ != nullptr) {
             DestroyWindow(window_);
             window_ = nullptr;
@@ -171,7 +174,7 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
         } else {
             result = common::Result<std::optional<RegionSelectionResult>>::Success(
                 std::optional<RegionSelectionResult>(
-                    RegionSelectionResult{session_.selection, std::move(cropped_image.Value())}));
+                    RegionSelectionResult{session_.selection, std::move(cropped_image.Value()), text_only_}));
         }
     }
 
@@ -180,6 +183,10 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
 }
 
 void RegionSelectionOverlay::InitializeSessionState() {
+    text_only_ = false;
+    ++ocr_generation_;
+    ocr_mode_ = ocr_busy_ = ocr_launch_pending_ = ocr_dragging_ = false;
+    ocr_selection_.Clear();
     session_.Reset(session_.start_with_full_selection);
     toolbar_.Hide();
 }
@@ -187,7 +194,7 @@ void RegionSelectionOverlay::InitializeSessionState() {
 common::Result<void> RegionSelectionOverlay::RegisterWindowClass() const {
     WNDCLASSEXW window_class{};
     window_class.cbSize = sizeof(window_class);
-    window_class.style = 0;
+    window_class.style = CS_DBLCLKS;
     window_class.lpfnWndProc = &RegionSelectionOverlay::WindowProc;
     window_class.hInstance = instance_;
     window_class.hCursor = LoadCursorW(nullptr, IDC_CROSS);
@@ -231,6 +238,7 @@ void RegionSelectionOverlay::RebuildSourceBuffers() {
 }
 
 void RegionSelectionOverlay::FinishSelection(bool accepted) {
+    text_only_ = accepted && ocr_mode_;
     session_.Finish(accepted, CurrentSelection());
     if (GetCapture() == window_) {
         ReleaseCapture();
@@ -421,7 +429,7 @@ void RegionSelectionOverlay::UpdateToolbarLayout() {
 
     RECT client_rect{};
     GetClientRect(window_, &client_rect);
-    toolbar_.UpdateLayout(session_.selection, client_rect, for_recording_, UiDpi(window_));
+    toolbar_.UpdateLayout(session_.selection, client_rect, for_recording_, UiDpi(window_), ocr_mode_);
 }
 
 void RegionSelectionOverlay::SetActiveTool(EditTool tool) {
@@ -531,7 +539,7 @@ void RegionSelectionOverlay::DrawInstructions(HDC hdc, const RECT& bounds) const
     // Window editing draws this above the revealed selection, not into the
     // dimmed bitmap where restoring the selected window would erase it.
     if (window_editing_) return;
-    renderer_.DrawInstructions(hdc, bounds, session_.start_with_full_selection, for_recording_, UiDpi(window_));
+    renderer_.DrawInstructions(hdc, bounds, session_.start_with_full_selection, for_recording_, UiDpi(window_), ocr_mode_);
 }
 
 std::array<RECT, 8> RegionSelectionOverlay::BuildSelectionHandleRects(const RECT& selection) const {
@@ -552,12 +560,13 @@ RegionSelectionRenderModel RegionSelectionOverlay::BuildRenderModel(const RECT& 
     model.starts_with_full_selection = session_.start_with_full_selection;
     model.active_tool = session_.active_tool;
     model.can_undo = CanUndoLastEdit();
+    model.can_copy_text = ocr_selection_.HasSelection();
 
     if (HasSelection()) {
         const RECT selection = CurrentSelection();
         model.has_selection = true;
         model.selection = selection;
-        model.show_selection_handles = session_.interaction_mode != InteractionMode::Selecting;
+        model.show_selection_handles = !ocr_mode_ && session_.interaction_mode != InteractionMode::Selecting;
         model.selection_handle_rects = BuildSelectionHandleRects(selection);
 
         const RECT label_rect = SelectionLabelRect(selection, client_rect);
@@ -567,6 +576,7 @@ RegionSelectionRenderModel RegionSelectionOverlay::BuildRenderModel(const RECT& 
             model.selection_label_text =
                 std::to_wstring(common::RectWidth(selection)) + L" x " +
                 std::to_wstring(common::RectHeight(selection));
+            if (ocr_mode_) model.selection_label_text = ocr_status_;
         }
     }
 
@@ -597,9 +607,10 @@ RegionSelectionRenderModel RegionSelectionOverlay::BuildRenderModel(const RECT& 
 }
 
 void RegionSelectionOverlay::PaintOverlay(HDC hdc, const RECT& client_rect) const {
+    if (ocr_mode_) PaintOcrSelection(hdc, client_rect);
     renderer_.PaintOverlay(hdc, client_rect, BuildRenderModel(client_rect), toolbar_, UiDpi(window_));
     if (window_editing_) {
-        renderer_.DrawInstructions(hdc, instruction_area_, true, false, UiDpi(window_));
+        renderer_.DrawInstructions(hdc, instruction_area_, true, false, UiDpi(window_), ocr_mode_);
     }
 }
 
@@ -630,6 +641,10 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
         return 1;
 
     case WM_SETCURSOR:
+        if (!ocr_menu_open_ && (reinterpret_cast<HWND>(w_param) != window_ || LOWORD(l_param) != HTCLIENT)) {
+            // Leave other windows' cursor handling to their own window procedure.
+            return FALSE;
+        }
         return HandleSetCursor() ? TRUE : FALSE;
 
     case WM_KEYDOWN:
@@ -639,8 +654,46 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
         break;
 
     case WM_RBUTTONUP:
-        FinishSelection(false);
+        if (!ocr_mode_) FinishSelection(false);
+        // Default processing sends WM_CONTEXTMENU for the OCR popup.
+        else break;
         return 0;
+
+    case WM_CONTEXTMENU:
+        if (ocr_mode_) {
+            POINT point{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)};
+            if (point.x == -1 && point.y == -1) {
+                point = POINT{session_.selection.left, session_.selection.top};
+                ClientToScreen(window_, &point);
+            }
+            ShowOcrContextMenu(point);
+            return 0;
+        }
+        break;
+
+    case WM_MEASUREITEM:
+        if (l_param && MeasureOcrMenuItem(*reinterpret_cast<MEASUREITEMSTRUCT*>(l_param))) return TRUE;
+        break;
+
+    case WM_DRAWITEM:
+        if (l_param && DrawOcrMenuItem(*reinterpret_cast<DRAWITEMSTRUCT*>(l_param))) return TRUE;
+        break;
+
+    case WM_TIMER:
+        if (w_param == kOcrPollTimer) { PollOcr(); return 0; }
+        break;
+
+    case WM_CAPTURECHANGED:
+        ocr_dragging_ = false;
+        break;
+
+    case WM_LBUTTONDBLCLK:
+        if (ocr_mode_ && !ocr_busy_) {
+            ocr_selection_.SelectWord(OcrPoint(POINT{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)}));
+            RefreshOcrSelection();
+            return 0;
+        }
+        break;
 
     case WM_LBUTTONDOWN:
         HandleLeftButtonDown(POINT{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)});
@@ -652,6 +705,15 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
 
     case WM_LBUTTONUP:
         HandleLeftButtonUp(POINT{GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param)});
+        return 0;
+
+    case WM_PRINTCLIENT:
+        if (buffers_.HasBackBuffer() && w_param) {
+            FlushPendingDirtyRegion();
+            const auto size = buffers_.BufferSize();
+            BitBlt(reinterpret_cast<HDC>(w_param), 0, 0, size.cx, size.cy,
+                   buffers_.BackBufferDc(), 0, 0, SRCCOPY);
+        }
         return 0;
 
     case WM_PAINT: {
@@ -697,6 +759,7 @@ LRESULT RegionSelectionOverlay::HandleMessage(UINT message, WPARAM w_param, LPAR
         return 0;
 
     case WM_DESTROY:
+        KillTimer(window_, kOcrPollTimer);
         DestroyBackBuffer();
         session_.finished = true;
         return 0;

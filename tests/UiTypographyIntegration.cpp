@@ -200,6 +200,7 @@ void CheckWindowEditingSession() {
                 edited.Value()->image.Height() == captured.Height() &&
                 edited.Value()->image.Pixels() == captured.Pixels(),
                 "Actual window editor exports mask, hints or desktop pixels");
+        Require(!edited.Value()->text_only, "Normal capture turned into text-only mode");
     }
 }
 

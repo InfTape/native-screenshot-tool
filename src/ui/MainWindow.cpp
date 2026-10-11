@@ -1321,6 +1321,10 @@ bool MainWindow::CaptureRegion() {
         return false;
     }
 
+    if (selected_result.Value()->text_only) {
+        UpdateStatus(L"已退出截图文字选择。");
+        return true;
+    }
     image_ = std::move(selected_result.Value()->image);
     return FinalizeCapturedImage(L"选区截图");
 }
@@ -1380,6 +1384,10 @@ bool MainWindow::CaptureWindow() {
         return false;
     }
 
+    if (edited_result.Value()->text_only) {
+        UpdateStatus(L"已退出截图文字选择。");
+        return true;
+    }
     image_ = std::move(edited_result.Value()->image);
     return FinalizeCapturedImage(L"窗口截图");
 }
