@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(NativeScreenshot LANGUAGES CXX)
+enable_language(RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(NativeScreenshot WIN32
     src/main.cpp
+    src/App.rc
     src/app/App.cpp
     src/ui/MainWindow.cpp
     src/ui/TitleBar.cpp

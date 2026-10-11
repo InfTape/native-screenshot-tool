@@ -6,6 +6,7 @@
 
 #include "common/Win32Error.h"
 #include "ui/UiTypography.h"
+#include "ui/AppIcon.h"
 
 namespace {
 
@@ -280,7 +281,7 @@ NOTIFYICONDATAW TrayIconController::BuildNotifyIconData(HWND window, UINT callba
     data.uID = kTrayIconId;
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = callback_message;
-    data.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    data.hIcon = LoadAppIcon(GetSystemMetricsForDpi(SM_CXSMICON,GetDpiForSystem()));
     wcsncpy_s(data.szTip, L"原生 Win32 截图工具", _TRUNCATE);
     return data;
 }

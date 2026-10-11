@@ -18,6 +18,7 @@
 #include "capture/FileClipboardWriter.h"
 #include "hotkey/HotkeyDefinition.h"
 #include "ui/UiTypography.h"
+#include "ui/AppIcon.h"
 
 namespace {
 
@@ -340,6 +341,8 @@ bool MainWindow::Create() {
     window_class.style = CS_HREDRAW | CS_VREDRAW;
     window_class.lpfnWndProc = &MainWindow::WindowProc;
     window_class.hInstance = instance_;
+    window_class.hIcon = LoadAppIcon(GetSystemMetricsForDpi(SM_CXICON,GetDpiForSystem()));
+    window_class.hIconSm = LoadAppIcon(GetSystemMetricsForDpi(SM_CXSMICON,GetDpiForSystem()));
     window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     window_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     window_class.lpszClassName = kClassName;

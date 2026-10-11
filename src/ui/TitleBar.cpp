@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "ui/UiTypography.h"
+#include "ui/AppIcon.h"
 
 namespace {
 constexpr UINT kMinimizeId = 0x7001;
@@ -65,7 +66,7 @@ void TitleBar::Paint(HDC dc) const {
     GetClientRect(parent_, &bounds);
     bounds.bottom = scale(kHeight);
     FillRect(dc, &bounds, GetSysColorBrush(COLOR_WINDOW));
-    DrawIconEx(dc, scale(12), scale(8), LoadIconW(nullptr, IDI_APPLICATION),
+    DrawIconEx(dc, scale(12), scale(8), LoadAppIcon(scale(20)),
         scale(20), scale(20), 0, nullptr, DI_NORMAL);
     wchar_t title[256]{};
     GetWindowTextW(parent_, title, static_cast<int>(std::size(title)));
