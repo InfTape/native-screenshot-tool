@@ -76,6 +76,7 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
     instruction_area_ = RECT{};
 
     const auto cleanup = [this]() {
+        ocr_stop_.request_stop();
         ++ocr_generation_;
         ocr_mode_ = ocr_busy_ = ocr_launch_pending_ = ocr_dragging_ = false;
         ocr_selection_.Clear();
@@ -183,6 +184,7 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
 }
 
 void RegionSelectionOverlay::InitializeSessionState() {
+    ocr_stop_.request_stop();
     text_only_ = false;
     ++ocr_generation_;
     ocr_mode_ = ocr_busy_ = ocr_launch_pending_ = ocr_dragging_ = false;
@@ -238,6 +240,7 @@ void RegionSelectionOverlay::RebuildSourceBuffers() {
 }
 
 void RegionSelectionOverlay::FinishSelection(bool accepted) {
+    ocr_stop_.request_stop();
     text_only_ = accepted && ocr_mode_;
     session_.Finish(accepted, CurrentSelection());
     if (GetCapture() == window_) {

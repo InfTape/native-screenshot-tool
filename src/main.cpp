@@ -1,6 +1,7 @@
 #include <Windows.h>
 
 #include "app/App.h"
+#include "ocr/OcrWorker.h"
 
 #if defined(_MSC_VER)
 // Use themed controls instead of the legacy common-control renderer.
@@ -9,6 +10,7 @@
 #endif
 
 int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int nCmdShow) {
+    if (const auto worker = ocr::RunWorkerIfRequested()) return *worker;
     app::App application(instance);
     return application.Run(nCmdShow);
 }

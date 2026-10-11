@@ -264,6 +264,7 @@ BOOL CALLBACK FindOverlay(HWND window, LPARAM parameter) {
 }  // namespace
 
 int main() {
+    if (const auto worker=ocr::RunWorkerIfRequested()) return *worker;
     common::EnableDpiAwareness();
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&controls);

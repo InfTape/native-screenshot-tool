@@ -95,13 +95,18 @@ OCR 使用本机 Windows 照片 / 截图工具附带的 OneOCR 引擎。程序�
 也可在程序旁的 `ocr\` 目录提供匹配的三个文件。
 不需要 Python、联网识别或 NPU；本仓库不附带微软 DLL 和模型文件。
 
+每次识别按需启动一个隐藏的 OCR 子进程，由同一个 EXE 提供，无需额外安装辅助程序。
+截图通过匿名共享内存传递，结果只返回文字与坐标；识别完成后子进程退出，模型及推理缓存随之释放。
+取消识别、返回编辑或关闭截图会终止正在识别的子进程；主程序退出时也会清理子进程。
+主进程不加载 OCR DLL 和模型。上述约 120 MB 是磁盘缓存，每次识别仍需重新初始化模型。
+
 OneOCR 是应用内部接口，后续更新可能改变接口或模型兼容性。
 调用参数参考 [AuroraWright/oneocr](https://github.com/AuroraWright/oneocr/blob/main/oneocr.py)
 和 [b1tg/win11-oneocr](https://github.com/b1tg/win11-oneocr/blob/master/ocr.cpp)。
 文字与坐标对齐、拖选及高亮的思路参考 [xland/ImageReader](https://github.com/xland/ImageReader)，
 由 [xland/ScreenCapture](https://github.com/xland/ScreenCapture) 调用。当前实现直接在原生截图浮层内交互。
 `OneOcrIntegration` 测试需要本机安装包含 OneOCR 的照片 / 截图工具，
-验证中文英文识别、引擎复用、文字坐标、跨行及反向拖选、Unicode 复制和异步关闭；使用独立窗口站，
+验证中文英文识别、进程隔离及取消、文字坐标、跨行及反向拖选、Unicode 复制和异步关闭；使用独立窗口站，
 不会覆盖用户的剪贴板。
 
 ## 录屏使用

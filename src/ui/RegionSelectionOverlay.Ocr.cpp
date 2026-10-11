@@ -22,6 +22,7 @@ ocr::Point RegionSelectionOverlay::OcrPoint(const POINT& point) const {
 }
 void RegionSelectionOverlay::StartOcr() {
     ResetInteraction();
+    ocr_stop_.request_stop();
     ++ocr_generation_;
     ocr_mode_ = ocr_busy_ = ocr_launch_pending_ = true;
     ocr_dragging_ = false;
@@ -42,6 +43,7 @@ void RegionSelectionOverlay::StartOcr() {
     PollOcr();
 }
 void RegionSelectionOverlay::LeaveOcr() {
+    ocr_stop_.request_stop();
     ++ocr_generation_;
     ocr_mode_ = ocr_busy_ = ocr_launch_pending_ = ocr_dragging_ = false;
     ocr_selection_.Clear();
@@ -61,9 +63,11 @@ void RegionSelectionOverlay::LaunchOcr() {
         return;
     }
     ocr_job_generation_ = ocr_generation_;
+    ocr_stop_ = std::stop_source{};
     try {
-        ocr_future_ = std::async(std::launch::async, [this, image = std::move(image.Value())]() {
-            return ocr_service_.RecognizeDocument(image);
+        ocr_future_ = std::async(std::launch::async,
+            [image = std::move(image.Value()), stop = ocr_stop_.get_token()]() mutable {
+            return ocr::RecognizeInWorker(std::move(image), stop);
         });
     } catch (const std::exception&) {
         ocr_busy_ = false;

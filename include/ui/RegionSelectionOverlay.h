@@ -18,6 +18,7 @@
 #include "ui/SelectionEditToolbar.h"
 #include "ui/SelectionSession.h"
 #include "ui/OcrTextSelection.h"
+#include "ocr/OcrWorker.h"
 
 namespace ui {
 
@@ -146,9 +147,9 @@ private:
     OcrTextSelection ocr_selection_;
     std::uint64_t ocr_generation_ = 0, ocr_job_generation_ = 0;
     static constexpr UINT_PTR kOcrPollTimer = 0x4F43;
-    // The future is destroyed before the engine; closing an overlay invalidates
-    // the request without blocking its UI or touching the worker's saved image.
-    ocr::OneOcrService ocr_service_;
+    // Cancellation kills only this request's child process. The UI owns no OCR
+    // model or inference runtime, and need not wait for recognition to finish.
+    std::stop_source ocr_stop_;
     std::future<common::Result<ocr::Document>> ocr_future_;
     RECT instruction_area_{};
     RegionSelectionBuffers buffers_;

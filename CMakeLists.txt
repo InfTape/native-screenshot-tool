@@ -24,6 +24,7 @@ add_executable(NativeScreenshot WIN32
     src/ui/OcrTextSelection.cpp
     src/ui/RegionSelectionOverlay.Ocr.cpp
     src/ocr/OneOcrService.cpp
+    src/ocr/OcrWorker.cpp
     src/ui/WindowSelectionOverlay.cpp
     src/ui/TrayIconController.cpp
     src/editing/ImageMarkupService.cpp
@@ -62,6 +63,7 @@ add_executable(NativeScreenshot WIN32
     include/ui/SelectionSession.h
     include/ui/OcrTextSelection.h
     include/ocr/OneOcrService.h
+    include/ocr/OcrWorker.h
     include/ui/WindowSelectionOverlay.h
     include/ui/TrayIconController.h
     include/editing/ImageMarkupService.h
@@ -133,6 +135,7 @@ if(BUILD_TESTING)
     add_executable(OneOcrIntegration
         tests/OneOcrIntegration.cpp
         src/ocr/OneOcrService.cpp
+        src/ocr/OcrWorker.cpp
         src/ui/OcrTextSelection.cpp
         src/ui/RegionSelectionOverlay.Ocr.cpp
         src/ui/RegionSelectionOverlay.cpp
@@ -158,7 +161,7 @@ if(BUILD_TESTING)
     endif()
     target_link_libraries(OneOcrIntegration PRIVATE Windowsapp Ole32 Shell32 Gdi32 User32 Msimg32 D2d1)
     add_test(NAME OneOcrIntegration COMMAND OneOcrIntegration)
-    set_tests_properties(OneOcrIntegration PROPERTIES TIMEOUT 45)
+    set_tests_properties(OneOcrIntegration PROPERTIES TIMEOUT 60)
 
     add_executable(FileClipboardIntegration
         tests/FileClipboardIntegration.cpp
@@ -185,6 +188,7 @@ if(BUILD_TESTING)
     add_executable(UiTypographyIntegration
         tests/UiTypographyIntegration.cpp
         src/ocr/OneOcrService.cpp
+        src/ocr/OcrWorker.cpp
         src/ui/OcrTextSelection.cpp
         src/ui/RegionSelectionOverlay.Ocr.cpp
         src/ui/OverlayPrimitives.cpp

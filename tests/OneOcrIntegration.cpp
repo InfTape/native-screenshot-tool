@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include <TlHelp32.h>
 
 #include <algorithm>
 #include <cstring>
@@ -6,17 +7,67 @@
 #include <iostream>
 #include <fstream>
 #include <chrono>
+#include <future>
+#include <thread>
 #include <stdexcept>
 #include <vector>
 
 #include "common/DpiAwareness.h"
-#include "ocr/OneOcrService.h"
+#include "ocr/OcrWorker.h"
 #include "ui/RegionSelectionOverlay.h"
 #include "ui/UiTypography.h"
 
 namespace {
 void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+unsigned ChildCount() {
+    const auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+    Require(snapshot!=INVALID_HANDLE_VALUE,"Cannot inspect worker lifecycle");
+    PROCESSENTRY32W entry{sizeof(entry)};
+    unsigned count=0;
+    if (Process32FirstW(snapshot,&entry)) {
+        do { if (entry.th32ParentProcessID==GetCurrentProcessId()) ++count; }
+        while (Process32NextW(snapshot,&entry));
+    }
+    CloseHandle(snapshot);
+    return count;
+}
+void CheckIsolation() {
+    Require(!GetModuleHandleW(L"oneocr.dll") && !GetModuleHandleW(L"onnxruntime.dll"),
+        "OCR runtime was loaded into the GUI process");
+    Require(ChildCount()==0,"OCR worker survived its request");
+}
+struct WorkerService {
+    common::Result<ocr::Document> RecognizeDocument(const capture::CapturedImage& image) {
+        auto result=ocr::RecognizeInWorker(image);
+        CheckIsolation();
+        return result;
+    }
+    common::Result<std::wstring> Recognize(const capture::CapturedImage& image) {
+        auto result=RecognizeDocument(image);
+        if (!result) return common::Result<std::wstring>::Failure(result.Error());
+        return common::Result<std::wstring>::Success(std::move(result.Value().text));
+    }
+};
+void CheckCancellation(const capture::CapturedImage& image) {
+    std::stop_source stop;
+    auto pending=std::async(std::launch::async,[&] { return ocr::RecognizeInWorker(image,stop.get_token()); });
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while (!ChildCount() && pending.wait_for(std::chrono::milliseconds(0))!=std::future_status::ready &&
+        std::chrono::steady_clock::now()<deadline) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Require(ChildCount()!=0,"Cancellation did not reach a running OCR worker");
+    const auto started=std::chrono::steady_clock::now();
+    stop.request_stop();
+    Require(pending.wait_for(std::chrono::seconds(2))==std::future_status::ready,
+        "Cancelling OCR did not promptly stop the worker");
+    const auto result=pending.get();
+    Require(!result && result.Error()==L"已取消文字识别。","Cancelled OCR returned a result");
+    Require(std::chrono::steady_clock::now()-started<std::chrono::seconds(2),"Cancellation blocked");
+    CheckIsolation();
+    Require(!ocr::RecognizeInWorker(image,stop.get_token()),"A pre-cancelled request started recognition");
+    CheckIsolation();
 }
 
 // A separate window station gives the UI test its own clipboard and keeps test
@@ -282,7 +333,7 @@ void CheckOverlay(const capture::CapturedImage& image,const ocr::Document& docum
     desktop.image={900,600,std::vector<std::uint8_t>(900*600*4,200)};
     ui::RegionSelectionOverlay overlay(GetModuleHandleW(nullptr));
     // Early exit followed immediately by another OCR session exercises stale
-    // asynchronous completion on the same persistent overlay/service instance.
+    // asynchronous completion on the same persistent overlay instance.
     for (int scenario=0;scenario<4;++scenario) {
         Probe probe;
         probe.document=document;probe.expected=document.text;
@@ -318,18 +369,21 @@ void CheckOverlay(const capture::CapturedImage& image,const ocr::Document& docum
 }
 
 int main() {
+    if (const auto worker=ocr::RunWorkerIfRequested()) return *worker;
     try {
         common::EnableDpiAwareness();
         IsolatedDesktop isolated;
         const auto image = TextImage();
         const auto original_pixels = image.Pixels();
-        ocr::OneOcrService missing(std::filesystem::temp_directory_path() /
-            (L"MissingOneOCR_" + std::to_wstring(GetCurrentProcessId())));
-        Require(!missing.Recognize(image), "Missing OCR runtime must report a failure");
-        Require(!missing.Recognize({}), "Empty image must report a failure");
-        Require(!missing.Recognize({4, 4, {1, 2, 3}}), "Truncated pixels must be rejected");
-        Require(!missing.Recognize({10001, 1, {1, 2, 3, 4}}), "Oversized image must be rejected");
-        ocr::OneOcrService service;
+        const auto missing=std::filesystem::temp_directory_path() /
+            (L"MissingOneOCR_" + std::to_wstring(GetCurrentProcessId()) + L".exe");
+        Require(!ocr::RecognizeInWorker(image,{},missing), "Missing worker must report a failure");
+        CheckIsolation();
+        WorkerService service;
+        Require(!service.Recognize({}), "Empty image must report a failure");
+        Require(!service.Recognize({4, 4, {1, 2, 3}}), "Truncated pixels must be rejected");
+        Require(!service.Recognize({10001, 1, {1, 2, 3, 4}}), "Oversized image must be rejected");
+        CheckCancellation(image);
         const auto result = service.Recognize(image);
         if (!result) {
             std::wcerr << result.Error() << L'\n';
@@ -350,7 +404,8 @@ int main() {
         const auto bounds=document.Value().lines.front().bounds;
         Require(bounds[0].x>15 && bounds[0].y>15 && bounds[2].x<720 && bounds[2].y<80,"OCR bounds outside source text");
         CheckOverlay(image,document.Value());
-        std::cout << "OneOCR: Chinese/English, geometry, engine reuse, invalid inputs, pixel preservation,\n"
+        CheckIsolation();
+        std::cout << "OneOCR: Chinese/English, geometry, process isolation/cancellation, invalid inputs, pixel preservation,\n"
                      "cross-line/reverse/partial/rotated/surrogate selection, inline highlight, Unicode clipboard,\n"
                      "blank result and nonblocking early-close/reopen passed\n";
         return 0;
