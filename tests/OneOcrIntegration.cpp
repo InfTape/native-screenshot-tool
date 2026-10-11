@@ -193,6 +193,23 @@ void CtrlKey(HWND window, WPARAM key) {
     SendMessageW(window,WM_KEYDOWN,key,0);
     SetKeyboardState(original);
 }
+void ClickTool(HWND window, editing::MarkupTool tool) {
+    ui::SelectionEditToolbar toolbar;
+    RECT client{};
+    GetClientRect(window, &client);
+    toolbar.UpdateLayout(kRegion, client, false, ui::UiDpi(window));
+    const auto bounds = toolbar.Bounds();
+    for (LONG x = bounds.left; x < bounds.right; ++x) {
+        const POINT point{x, (bounds.top + bounds.bottom) / 2};
+        const auto button = toolbar.HitTest(point);
+        if (button.IsTool() && button.tool == tool) {
+            SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(point.x, point.y));
+            SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+            return;
+        }
+    }
+    throw std::runtime_error("Markup toolbar tool missing");
+}
 std::wstring ClipboardText(HWND window) {
     if (!OpenClipboard(window)) return {};
     HANDLE data = GetClipboardData(CF_UNICODETEXT);
@@ -212,7 +229,7 @@ void Drag(HWND window, ocr::Point begin, ocr::Point end) {
     SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(last.x,last.y));
     SendMessageW(window,WM_LBUTTONUP,0,MAKELPARAM(last.x,last.y));
 }
-COLORREF SavePreview(HWND window, POINT sample) {
+COLORREF SavePreview(HWND window, POINT sample, bool save = true) {
     BITMAPINFO info{};
     info.bmiHeader = {sizeof(BITMAPINFOHEADER),900,-600,1,32,BI_RGB};
     void* pixels = nullptr;
@@ -224,13 +241,37 @@ COLORREF SavePreview(HWND window, POINT sample) {
     BITMAPFILEHEADER header{};
     header.bfType=0x4D42; header.bfOffBits=sizeof(header)+sizeof(info.bmiHeader);
     header.bfSize=header.bfOffBits+900*600*4;
-    std::ofstream output("OcrInlinePreview.bmp",std::ios::binary);
-    output.write(reinterpret_cast<const char*>(&header),sizeof(header));
-    output.write(reinterpret_cast<const char*>(&info.bmiHeader),sizeof(info.bmiHeader));
-    output.write(static_cast<const char*>(pixels),900*600*4);
+    if (save) {
+        std::ofstream output("OcrInlinePreview.bmp",std::ios::binary);
+        output.write(reinterpret_cast<const char*>(&header),sizeof(header));
+        output.write(reinterpret_cast<const char*>(&info.bmiHeader),sizeof(info.bmiHeader));
+        output.write(static_cast<const char*>(pixels),900*600*4);
+    }
     const auto color=GetPixel(dc,sample.x,sample.y);
     SelectObject(dc,old);DeleteObject(bitmap);DeleteDC(dc);
     return color;
+}
+void CheckInlineUndo(HWND window) {
+    const auto rectangle_sample = ClientPoint({500, 130});
+    const auto brush_sample = ClientPoint({500, 145});
+    const auto original_rectangle = SavePreview(window, rectangle_sample, false);
+    const auto original_brush = SavePreview(window, brush_sample, false);
+    ClickTool(window, editing::MarkupTool::Rectangle);
+    Drag(window, {400, 130}, {650, 160});
+    Require(SavePreview(window, rectangle_sample, false) != original_rectangle,
+            "Rectangle edit did not enter the displayed image");
+    ClickTool(window, editing::MarkupTool::Brush);
+    Drag(window, {450, 145}, {650, 145});
+    Require(SavePreview(window, brush_sample, false) != original_brush,
+            "Brush edit did not enter the displayed image");
+    CtrlKey(window, 'Z');
+    Require(SavePreview(window, brush_sample, false) == original_brush,
+            "Ctrl+Z did not remove the last annotation");
+    Require(SavePreview(window, rectangle_sample, false) != original_rectangle,
+            "Ctrl+Z removed the earlier annotation");
+    ClickCommand(window, ui::SelectionToolbarCommand::Undo, false);
+    Require(SavePreview(window, rectangle_sample, false) == original_rectangle,
+            "Toolbar undo did not restore the original image");
 }
 BOOL InspectEditorImpl(HWND window, LPARAM parameter) {
     wchar_t class_name[128]{};
@@ -241,6 +282,7 @@ BOOL InspectEditorImpl(HWND window, LPARAM parameter) {
     auto& probe=*reinterpret_cast<Probe*>(parameter);
     probe.found=true;
     if (probe.phase==0) {
+        if (probe.return_editing) CheckInlineUndo(window);
         ClickCommand(window,ui::SelectionToolbarCommand::Ocr,false);
         probe.phase=1;
         if (probe.early_close) {
@@ -407,7 +449,7 @@ int main() {
         CheckIsolation();
         std::cout << "OneOCR: Chinese/English, geometry, process isolation/cancellation, invalid inputs, pixel preservation,\n"
                      "cross-line/reverse/partial/rotated/surrogate selection, inline highlight, Unicode clipboard,\n"
-                     "blank result and nonblocking early-close/reopen passed\n";
+                     "blank result, inline markup/Ctrl+Z/toolbar undo and nonblocking early-close/reopen passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

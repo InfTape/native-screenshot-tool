@@ -95,7 +95,6 @@ private:
     void UpdateToolbarLayout();
     void SetActiveTool(EditTool tool);
     bool CanUndoLastEdit() const;
-    void PushUndoState();
     void UndoLastEdit();
     common::Result<void> ApplyMarkupCommand(const editing::MarkupCommand& command);
     common::Result<void> ApplyPendingRectangle();

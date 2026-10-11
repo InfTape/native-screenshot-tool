@@ -9,7 +9,6 @@
 
 #include "common/RectUtils.h"
 #include "common/Win32Error.h"
-#include "editing/ImageMarkupService.h"
 #include "ui/UiTypography.h"
 #include "ui/WindowEditingCanvas.h"
 
@@ -446,12 +445,10 @@ bool RegionSelectionOverlay::CanUndoLastEdit() const {
     return session_.CanUndo();
 }
 
-void RegionSelectionOverlay::PushUndoState() {
-    session_.PushUndoState(working_image_, kMaxUndoSteps);
-}
-
 void RegionSelectionOverlay::UndoLastEdit() {
-    if (!session_.UndoLastEdit(working_image_)) {
+    auto result = session_.UndoLastEdit(working_image_);
+    if (!result) {
+        ShowEditError(result.Error());
         return;
     }
 
@@ -460,10 +457,8 @@ void RegionSelectionOverlay::UndoLastEdit() {
 }
 
 common::Result<void> RegionSelectionOverlay::ApplyMarkupCommand(const editing::MarkupCommand& command) {
-    PushUndoState();
-    common::Result<void> result = editing::ImageMarkupService::ApplyCommand(working_image_, command);
+    common::Result<void> result = session_.ApplyEdit(working_image_, command, kMaxUndoSteps);
     if (!result) {
-        session_.DiscardLastUndo();
         return result;
     }
 

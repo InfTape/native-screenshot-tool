@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "capture/CapturedImage.h"
+#include "common/Result.h"
 #include "editing/MarkupCommand.h"
 
 namespace ui {
@@ -41,9 +42,10 @@ public:
     void CommitSelection(const RECT& current_selection);
 
     [[nodiscard]] bool CanUndo() const;
-    void PushUndoState(const capture::CapturedImage& image, std::size_t max_undo_steps);
-    bool UndoLastEdit(capture::CapturedImage& image);
-    void DiscardLastUndo();
+    common::Result<void> ApplyEdit(capture::CapturedImage& image,
+                                   const editing::MarkupCommand& command,
+                                   std::size_t max_undo_steps);
+    common::Result<void> UndoLastEdit(capture::CapturedImage& image);
     void ClearHistory();
 
     bool start_with_full_selection = false;
@@ -64,7 +66,10 @@ public:
     double brush_smooth_y = 0.0;
 
 private:
-    std::vector<capture::CapturedImage> edit_history_;
+    // Older edits are flattened into one checkpoint; recent edits retain only
+    // their geometry and style, never a full image for each undo step.
+    capture::CapturedImage history_base_;
+    std::vector<editing::MarkupCommand> edit_history_;
 };
 
 }  // namespace ui

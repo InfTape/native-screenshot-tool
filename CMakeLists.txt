@@ -132,6 +132,23 @@ target_link_libraries(NativeScreenshot PRIVATE
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(MarkupHistoryIntegration
+        tests/MarkupHistoryIntegration.cpp
+        src/ui/SelectionSession.cpp
+        src/editing/ImageMarkupService.cpp
+        src/common/Direct2D.cpp
+        src/capture/CapturedImage.cpp
+        src/common/RectUtils.cpp
+    )
+    target_include_directories(MarkupHistoryIntegration PRIVATE include)
+    target_compile_definitions(MarkupHistoryIntegration PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(MarkupHistoryIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
+    endif()
+    target_link_libraries(MarkupHistoryIntegration PRIVATE Gdi32 User32 D2d1 Psapi)
+    add_test(NAME MarkupHistoryIntegration COMMAND MarkupHistoryIntegration)
+    set_tests_properties(MarkupHistoryIntegration PROPERTIES TIMEOUT 30)
+
     add_executable(OneOcrIntegration
         tests/OneOcrIntegration.cpp
         src/ocr/OneOcrService.cpp
