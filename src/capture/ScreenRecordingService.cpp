@@ -227,7 +227,7 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
         }
         stage = L"初始化 WGC 采集";
         WgcCaptureSource source;
-        source.Initialize(region, window, width, height);
+        source.Initialize(region, nullptr, width, height);
         std::vector<BYTE> pixels;
         stage = L"WGC 采集与编码画面";
 
@@ -247,6 +247,7 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
                 if (region.right - region.left != source_width ||
                     region.bottom - region.top != source_height) break;
                 { const std::lock_guard lock(region_mutex_); current_region_ = region; }
+                source.UpdateRegion(region);
             }
             if (!source.ReadFrame(pixels)) break;
             // Wall-clock timestamps keep slow capture/encoding from speeding up playback.

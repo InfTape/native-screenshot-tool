@@ -20,6 +20,7 @@ public:
 
     void Initialize(const RECT& region, HWND window, UINT output_width, UINT output_height,
                     bool include_cursor = true);
+    void UpdateRegion(const RECT& region);
     // False means the window closed, was hidden/minimized, or changed size.
     bool ReadFrame(std::vector<BYTE>& pixels, WgcRowOrder row_order = WgcRowOrder::BottomUp);
 

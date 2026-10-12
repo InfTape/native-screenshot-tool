@@ -49,6 +49,7 @@ struct WgcCaptureSource::Implementation {
         RECT crop{};
         UINT destination_x = 0;
         UINT destination_y = 0;
+        bool has_intersection = false;
         std::shared_ptr<std::atomic<bool>> closed = std::make_shared<std::atomic<bool>>(false);
         winrt::event_token closed_token{};
         bool has_frame = false;
@@ -73,16 +74,11 @@ struct WgcCaptureSource::Implementation {
     UINT height = 0;
     bool include_cursor = true;
 
-    void AddStream(GraphicsCaptureItem item, const RECT& bounds, const RECT& intersection,
-                   const RECT& output_region, HMONITOR monitor = nullptr) {
+    void AddStream(GraphicsCaptureItem item, const RECT& bounds, HMONITOR monitor = nullptr) {
         auto stream = std::make_unique<Stream>();
         stream->item = item;
         stream->bounds = bounds;
         stream->monitor = monitor;
-        stream->crop = {intersection.left - bounds.left, intersection.top - bounds.top,
-                        intersection.right - bounds.left, intersection.bottom - bounds.top};
-        stream->destination_x = static_cast<UINT>(intersection.left - output_region.left);
-        stream->destination_y = static_cast<UINT>(intersection.top - output_region.top);
         const auto size = item.Size();
         if (size.Width != bounds.right - bounds.left || size.Height != bounds.bottom - bounds.top) {
             throw winrt::hresult_error(E_FAIL, L"WGC 画面尺寸与录制范围不一致，请重新选择。");
@@ -111,6 +107,36 @@ struct WgcCaptureSource::Implementation {
         });
         stream->session.StartCapture();
         streams.push_back(std::move(stream));
+    }
+
+    void UpdateCrop(const RECT& output_region) {
+        for (auto& stream : streams) {
+            if (stream->monitor) {
+                RECT intersection{};
+                if (IntersectRect(&intersection, &output_region, &stream->bounds)) {
+                    stream->crop = {
+                        intersection.left - stream->bounds.left,
+                        intersection.top - stream->bounds.top,
+                        intersection.right - stream->bounds.left,
+                        intersection.bottom - stream->bounds.top
+                    };
+                    stream->destination_x = static_cast<UINT>(intersection.left - output_region.left);
+                    stream->destination_y = static_cast<UINT>(intersection.top - output_region.top);
+                    stream->has_intersection = true;
+                } else {
+                    stream->crop = {0, 0, 0, 0};
+                    stream->destination_x = 0;
+                    stream->destination_y = 0;
+                    stream->has_intersection = false;
+                }
+            } else {
+                // Window stream
+                stream->crop = {0, 0, stream->bounds.right - stream->bounds.left, stream->bounds.bottom - stream->bounds.top};
+                stream->destination_x = 0;
+                stream->destination_y = 0;
+                stream->has_intersection = true;
+            }
+        }
     }
 
     bool Update(Stream& stream) {
@@ -192,24 +218,33 @@ void WgcCaptureSource::Initialize(const RECT& region, HWND window, UINT width, U
     if (window) {
         GraphicsCaptureItem item{nullptr};
         winrt::check_hresult(factory->CreateForWindow(window, winrt::guid_of<GraphicsCaptureItem>(), winrt::put_abi(item)));
-        state.AddStream(item, region, region, region);
+        state.AddStream(item, region);
+        state.UpdateCrop(region);
     } else {
         std::vector<MonitorRegion> monitors;
         if (!EnumDisplayMonitors(nullptr, nullptr, CollectMonitors, reinterpret_cast<LPARAM>(&monitors))) {
             winrt::throw_last_error();
         }
+        bool any_intersect = false;
         for (const auto& monitor : monitors) {
             RECT intersection{};
-            if (!IntersectRect(&intersection, &region, &monitor.bounds)) continue;
+            if (IntersectRect(&intersection, &region, &monitor.bounds)) {
+                any_intersect = true;
+            }
             GraphicsCaptureItem item{nullptr};
             winrt::check_hresult(factory->CreateForMonitor(monitor.monitor, winrt::guid_of<GraphicsCaptureItem>(),
                                                           winrt::put_abi(item)));
-            state.AddStream(item, monitor.bounds, intersection, region, monitor.monitor);
+            state.AddStream(item, monitor.bounds, monitor.monitor);
         }
-        if (state.streams.empty()) {
+        if (!any_intersect || state.streams.empty()) {
             throw winrt::hresult_error(E_INVALIDARG, L"录制范围不在任何显示器内。");
         }
+        state.UpdateCrop(region);
     }
+}
+
+void WgcCaptureSource::UpdateRegion(const RECT& region) {
+    implementation_->UpdateCrop(region);
 }
 
 bool WgcCaptureSource::ReadFrame(std::vector<BYTE>& pixels, WgcRowOrder row_order) {
@@ -222,7 +257,9 @@ bool WgcCaptureSource::ReadFrame(std::vector<BYTE>& pixels, WgcRowOrder row_orde
         bool ready = true;
         for (auto& stream : state.streams) {
             if (!state.Update(*stream)) return false;
-            ready = ready && stream->has_frame;
+            if (stream->has_intersection) {
+                ready = ready && stream->has_frame;
+            }
         }
         if (ready) break;
         if (std::chrono::steady_clock::now() >= deadline) {
@@ -235,7 +272,9 @@ bool WgcCaptureSource::ReadFrame(std::vector<BYTE>& pixels, WgcRowOrder row_orde
     constexpr float black[]{0, 0, 0, 1};
     state.context->ClearRenderTargetView(state.render_target.get(), black);
     for (const auto& stream : state.streams) {
+        if (!stream->has_intersection) continue;
         const RECT& crop = stream->crop;
+        if (crop.right <= crop.left || crop.bottom <= crop.top) continue;
         D3D11_BOX box{static_cast<UINT>(crop.left), static_cast<UINT>(crop.top), 0,
                       static_cast<UINT>(crop.right), static_cast<UINT>(crop.bottom), 1};
         state.context->CopySubresourceRegion(state.composed.get(), 0, stream->destination_x,

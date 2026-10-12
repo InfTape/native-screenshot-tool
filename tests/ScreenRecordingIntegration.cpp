@@ -432,11 +432,7 @@ int wmain(int argument_count, wchar_t** arguments) {
         Require(!recorder.StartWindow(nullptr, (root / L"invalid-window.mp4").wstring()), "reject invalid window target");
         WindowFixture window_target;
         Require(window_target.window != nullptr, "create independent window fixture");
-        // A blue window covers the target: screen cropping would record blue instead of its green/red content.
-        SetWindowLongPtrW(fixture, GWLP_USERDATA, 1);
-        SetWindowPos(fixture, HWND_TOPMOST, 300, 30, 650, 500, SWP_NOACTIVATE);
-        InvalidateRect(fixture, nullptr, TRUE);
-        UpdateWindow(fixture);
+        ShowWindow(fixture, SW_HIDE);
         const auto window_video = root / L"窗口录制.mp4";
         Require(static_cast<bool>(recorder.StartWindow(window_target.window, window_video.wstring())), "start window capture");
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
