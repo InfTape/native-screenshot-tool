@@ -51,17 +51,15 @@ constexpr UINT_PTR kRecordingTimerId = 4001;
 constexpr UINT kTrayIconMessage = WM_APP + 1;
 constexpr UINT kRecordingStopMessage = WM_APP + 2;
 
-constexpr int kWindowWidth = 1240;
-constexpr int kWindowHeight = 460;
-constexpr int kMinWindowWidth = 980;
-constexpr int kMinWindowHeight = 450;
+constexpr int kMinWindowWidth = 777;
+constexpr int kMinWindowHeight = 480;
 constexpr int kMargin = 16;
-constexpr int kButtonWidth = 148;
+constexpr int kButtonWidth = 110;
 constexpr int kButtonHeight = 32;
 constexpr int kComboBoxHeight = 220;
 constexpr int kGap = 10;
 constexpr int kStatusHeight = 24;
-constexpr int kSaveFormatComboWidth = 110;
+constexpr int kFormatComboWidth = 80;
 constexpr int kStartupOptionFallbackWidth = 320;
 constexpr wchar_t kStartupRegistryPath[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kStartupValueName[] = L"NativeScreenshot";
@@ -361,8 +359,8 @@ bool MainWindow::Create() {
                               WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                               CW_USEDEFAULT,
                               CW_USEDEFAULT,
-                              kWindowWidth,
-                              kWindowHeight,
+                              kMinWindowWidth,
+                              kMinWindowHeight,
                               nullptr,
                               nullptr,
                               instance_,
@@ -370,14 +368,10 @@ bool MainWindow::Create() {
 
     if (window_ == nullptr) return false;
 
-    // Window and control dimensions are expressed in 96-DPI logical pixels.
-    RECT bounds{0, 0, MulDiv(kWindowWidth, dpi_, 96), MulDiv(kWindowHeight, dpi_, 96)};
-    using AdjustWindowRectExForDpiFn = BOOL(WINAPI*)(LPRECT, DWORD, BOOL, DWORD, UINT);
-    const auto adjust_for_dpi = reinterpret_cast<AdjustWindowRectExForDpiFn>(
-        GetProcAddress(GetModuleHandleW(L"user32.dll"), "AdjustWindowRectExForDpi"));
-    if (adjust_for_dpi) adjust_for_dpi(&bounds, WS_OVERLAPPEDWINDOW & ~WS_CAPTION, FALSE, 0, dpi_);
-    else AdjustWindowRectEx(&bounds, WS_OVERLAPPEDWINDOW & ~WS_CAPTION, FALSE, 0);
-    SetWindowPos(window_, nullptr, 0, 0, bounds.right - bounds.left, bounds.bottom - bounds.top,
+    // Match WM_GETMINMAXINFO's outer-window dimensions, including the frame.
+    // Adding non-client margins here would make startup larger than the minimum.
+    SetWindowPos(window_, nullptr, 0, 0, MulDiv(kMinWindowWidth, dpi_, 96),
+                 MulDiv(kMinWindowHeight, dpi_, 96),
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     return true;
 }
@@ -1109,7 +1103,7 @@ void MainWindow::LayoutControls(int client_width, int client_height) {
 
     x = kMargin;
     move(save_directory_button_, x, y, kButtonWidth, kButtonHeight, TRUE);
-    x += kButtonWidth + kGap;
+    y += kButtonHeight + kGap;
 
     const auto layout_combo = [&](HWND combo, int combo_x, int combo_y, int width) {
         move(combo, combo_x, combo_y, width, kComboBoxHeight, TRUE);
@@ -1132,8 +1126,8 @@ void MainWindow::LayoutControls(int client_width, int client_height) {
                      MulDiv(combo_y, dpi_, 96) + (row_height - (combo_rect.bottom - combo_rect.top)) / 2,
                      0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     };
-    layout_combo(save_format_combo_, x, y, kSaveFormatComboWidth);
-    x += kSaveFormatComboWidth + kGap;
+    layout_combo(save_format_combo_, x, y, kFormatComboWidth);
+    x += kFormatComboWidth + kGap;
 
     move(save_directory_label_,
                x,
@@ -1159,26 +1153,30 @@ void MainWindow::LayoutControls(int client_width, int client_height) {
     move(full_record_button_, kMargin, y, kButtonWidth, kButtonHeight, TRUE);
     move(region_record_button_, kMargin + kButtonWidth + kGap, y, kButtonWidth, kButtonHeight, TRUE);
     move(window_record_button_, kMargin + 2 * (kButtonWidth + kGap), y, kButtonWidth, kButtonHeight, TRUE);
-    move(stop_record_button_, kMargin + 3 * (kButtonWidth + kGap), y, kButtonWidth, kButtonHeight, TRUE);
-    x = kMargin + 4 * (kButtonWidth + kGap);
-    constexpr int kRecordingFormatComboWidth = 80;
-    layout_combo(recording_format_combo_, x, y, kRecordingFormatComboWidth);
-    x += kRecordingFormatComboWidth + kGap;
+    const int recording_column_x = kMargin + 3 * (kButtonWidth + kGap);
+    move(stop_record_button_, recording_column_x, y, kButtonWidth, kButtonHeight, TRUE);
+    y += kButtonHeight + kGap;
+    x = kMargin;
+    layout_combo(recording_format_combo_, x, y, kFormatComboWidth);
+    x += kFormatComboWidth + kGap;
     move(recording_label_, x, y, std::max(1, client_width - x - kMargin), kButtonHeight, TRUE);
     y += kButtonHeight + kGap;
 
     constexpr int kHotkeyColumnGap = 24;
     constexpr int kHotkeyRows = 3;
-    const int column_width = (client_width - 2 * kMargin - kHotkeyColumnGap) / 2;
     for (const HotkeySlot slot : kConfigurableHotkeySlots) {
         const std::size_t index = HotkeySlotIndex(slot);
         const int column = static_cast<int>(index) / kHotkeyRows;
         const int row = static_cast<int>(index) % kHotkeyRows;
-        const int column_x = kMargin + column * (column_width + kHotkeyColumnGap);
+        // Keep recording hotkey buttons aligned with the Stop recording button
+        // as the window grows; only the right-hand label width is flexible.
+        const int column_x = column == 0 ? kMargin : recording_column_x;
+        const int column_right = column == 0 ? recording_column_x - kHotkeyColumnGap : client_width - kMargin;
+        const int label_x = column_x + kButtonWidth + kGap;
         const int row_y = y + row * (kButtonHeight + kGap);
         move(hotkey_buttons_[index], column_x, row_y, kButtonWidth, kButtonHeight, TRUE);
-        move(hotkey_labels_[index], column_x + kButtonWidth + kGap, row_y,
-             std::max(1, column_width - kButtonWidth - kGap), kButtonHeight, TRUE);
+        move(hotkey_labels_[index], label_x, row_y,
+             std::max(1, column_right - label_x), kButtonHeight, TRUE);
     }
     y += kHotkeyRows * (kButtonHeight + kGap);
 
