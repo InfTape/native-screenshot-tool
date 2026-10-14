@@ -21,6 +21,7 @@ ocr::Point RegionSelectionOverlay::OcrPoint(const POINT& point) const {
             static_cast<float>(point.y - session_.selection.top)};
 }
 void RegionSelectionOverlay::StartOcr() {
+    translation_window_.Close();
     ResetInteraction();
     ocr_stop_.request_stop();
     ++ocr_generation_;
@@ -43,6 +44,7 @@ void RegionSelectionOverlay::StartOcr() {
     PollOcr();
 }
 void RegionSelectionOverlay::LeaveOcr() {
+    translation_window_.Close();
     ocr_stop_.request_stop();
     ++ocr_generation_;
     ocr_mode_ = ocr_busy_ = ocr_launch_pending_ = ocr_dragging_ = false;
@@ -128,6 +130,19 @@ void RegionSelectionOverlay::CopyOcrText() {
     GetClientRect(window_, &client);
     RefreshDirtyRect(SelectionLabelRect(session_.selection, client));
 }
+void RegionSelectionOverlay::TranslateOcrText() {
+    if (!ocr_mode_ || ocr_busy_ || ocr_selection_.Empty()) return;
+    const auto text = ocr_selection_.HasSelection() ? ocr_selection_.SelectedText() : ocr_selection_.AllText();
+    const auto translation_text = ocr_selection_.TranslationText();
+    if (!translation_window_.Show(window_, text,
+            [translation_text](std::wstring_view, std::stop_token stop) {
+                return translation::TranslateEnglishToChinese(translation_text, stop);
+            })) {
+        ocr_status_ = L"无法打开翻译窗口，请重试。";
+        SetWindowTextW(window_, ocr_status_.c_str());
+        RefreshFullFrame();
+    }
+}
 void RegionSelectionOverlay::ShowOcrContextMenu(POINT point) {
     const UINT dpi = UiDpi(window_);
     if (!ocr_menu_font_ || ocr_menu_dpi_ != dpi) {
@@ -140,10 +155,11 @@ void RegionSelectionOverlay::ShowOcrContextMenu(POINT point) {
     if (!menu) return;
     AppendMenuW(menu, MF_STRING | (ocr_selection_.HasSelection() ? MF_ENABLED : MF_GRAYED), 1, L"复制选中文字\tCtrl+C");
     AppendMenuW(menu, MF_STRING | (ocr_selection_.Empty() ? MF_GRAYED : MF_ENABLED), 2, L"全选\tCtrl+A");
+    AppendMenuW(menu, MF_STRING | (!ocr_busy_ && !ocr_selection_.Empty() ? MF_ENABLED : MF_GRAYED), 4, L"翻译为简体中文\tCtrl+T");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 3, L"返回编辑");
     static constexpr const wchar_t* labels[] = {
-        L"复制选中文字\tCtrl+C", L"全选\tCtrl+A", nullptr, L"返回编辑"};
+        L"复制选中文字\tCtrl+C", L"全选\tCtrl+A", L"翻译为简体中文\tCtrl+T", nullptr, L"返回编辑"};
     for (UINT index = 0; index < std::size(labels); ++index) {
         if (!labels[index]) continue;
         // Keep the native text for accessibility while using the same font for
@@ -165,6 +181,7 @@ void RegionSelectionOverlay::ShowOcrContextMenu(POINT point) {
     if (command == 1) CopyOcrText();
     if (command == 2) { ocr_selection_.SelectAll(); RefreshOcrSelection(); }
     if (command == 3) LeaveOcr();
+    if (command == 4) TranslateOcrText();
     if (window_) HandleSetCursor();
 }
 bool RegionSelectionOverlay::MeasureOcrMenuItem(MEASUREITEMSTRUCT& item) const {

@@ -18,6 +18,7 @@
 - 支持系统托盘常驻、托盘菜单触发截图、双击托盘恢复主窗口
 - 支持 PNG / BMP 保存，三种截图模式都可自动保存并复制到剪贴板
 - 选区、窗口截图的编辑浮条支持 OCR，离线识别当前选区文字；可直接在截图上跨行拖选、双击选词、Ctrl+A 全选和 Ctrl+C 复制
+- OCR 模式支持谷歌在线翻译，默认英文转简体中文；选中文字时翻译选中部分，未选择时翻译全部，在原文/译文窗口中查看和复制译文
 - 支持全屏、选区和窗口录屏，可选择 H.264 MP4 或循环播放的 GIF，包含鼠标指针
 - 录屏统一使用 Windows Graphics Capture (WGC)，通过 D3D11 按原始像素裁剪、拼接跨屏选区；不使用 GDI 或 DXGI Desktop Duplication 回退
 - 录制时显示红色范围边框、范围外淡色遮罩及计时浮条，可直接停止并保存；遮罩不阻挡鼠标操作
@@ -90,6 +91,22 @@ ctest --test-dir build -C Release --output-on-failure
 3. 支持跨行拖选、双击选词、Ctrl+A 全选；按 Ctrl+C、点击浮条“复制”或右键菜单复制选中文字。
    复制后仍保留截图，可继续选择。浮条“返回”恢复编辑，“关闭” / Enter / Esc 退出文字选择。
    没有文字或缺少组件时在截图内显示提示。高亮不会写入截图像素。
+4. 点击 OCR 浮条“翻译”、按 Ctrl+T，或使用右键菜单“翻译为简体中文”。有选中文字时只翻译选中部分，否则翻译全部识别文字。
+   默认源语言为英文、目标语言为简体中文。结果窗口显示原文与译文，可选中复制，也可点击“复制译文”；关闭结果窗口后可继续 OCR 拖选。
+   翻译前根据文字行间距、大小、对齐和句末标点合并英文的排版换行，避免将 `have` 与下一行的 `arrived` 分开翻译；段落、标题和列表边界尽量保留。
+   原文显示、拖选及复制保留原来的换行，仅发送给翻译接口的文本会进行合并。这是启发式判断，复杂排版仍可能出现误判。
+   翻译在后台进行，关闭结果窗口、返回编辑或退出截图会取消请求；网络失败时保留原文和 OCR 结果，并显示错误，可再次点击“翻译”重试。
+
+OCR 识别仍然完全离线；只有主动触发翻译时，待翻译的文字才直接发送到谷歌服务器，不上传截图。
+翻译使用 Google 翻译网页版的 `MkEWBc` RPC，参考
+[GTranslate.GoogleTranslator2](https://github.com/d4n3436/GTranslate/blob/master/src/GTranslate/Translators/GoogleTranslator2.cs)，
+以 Windows 自带 WinHTTP 和 JSON API 实现，无需 Python、.NET、额外运行时或 Google Cloud API Key。
+超过接口单次 5000 UTF-16 字符限制的文字会按换行/空白分段，避免拆开 Unicode 代理对。
+这是非官方网页接口，可能限流或发生变化；程序不会绕过限流，失败时需稍后重试。
+`GoogleTranslationIntegration` 默认只做离线协议和窗口生命周期测试；实际联网验证可运行
+`build\Release\GoogleTranslationIntegration.exe --live`。
+OCR 按钮到谷歌接口的完整链路可运行 `build\Release\OneOcrIntegration.exe --live-translation`，
+验证整段/选中文字翻译、关闭译文后继续 OCR 复制；两项联网验证不加入默认 CTest。
 
 OCR 使用本机 Windows 照片 / 截图工具附带的 OneOCR 引擎。程序优先查找已安装的照片包，
 也支持截图工具中的组件；首次使用会将 `oneocr.dll`、`oneocr.onemodel`、`onnxruntime.dll`

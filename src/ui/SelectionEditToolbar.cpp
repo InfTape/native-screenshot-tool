@@ -28,9 +28,10 @@ bool PointInRectInclusive(const RECT& rect, const POINT& point) {
            point.y < rect.bottom;
 }
 
-bool IsButtonEnabled(const ui::SelectionToolbarButtonId& button_id, bool can_undo, bool can_copy_text) {
+bool IsButtonEnabled(const ui::SelectionToolbarButtonId& button_id, bool can_undo, bool can_copy_text, bool can_translate) {
     return (!button_id.IsCommand(ui::SelectionToolbarCommand::Undo) || can_undo) &&
-           (!button_id.IsCommand(ui::SelectionToolbarCommand::CopyText) || can_copy_text);
+           (!button_id.IsCommand(ui::SelectionToolbarCommand::CopyText) || can_copy_text) &&
+           (!button_id.IsCommand(ui::SelectionToolbarCommand::TranslateText) || can_translate);
 }
 
 }  // namespace
@@ -106,6 +107,10 @@ void SelectionEditToolbar::UpdateLayout(const RECT& selection, const RECT& clien
         const int source_index = for_recording && index > 0 ? index + kButtonCount - 3 : index;
         buttons_[index].id = kButtonIds[source_index];
         buttons_[index].label = for_recording && index == 1 ? L"开始录制" : kLabels[source_index];
+        if (ocr_mode && source_index == 0) {
+            buttons_[index].id = SelectionToolbarButtonId::Command(SelectionToolbarCommand::TranslateText);
+            buttons_[index].label = L"翻译";
+        }
         if (ocr_mode && source_index == 5) {
             buttons_[index].id = SelectionToolbarButtonId::Command(SelectionToolbarCommand::CopyText);
             buttons_[index].label = L"复制";
@@ -150,7 +155,7 @@ SelectionToolbarButtonId SelectionEditToolbar::HitTest(const POINT& point) const
     return SelectionToolbarButtonId::None();
 }
 
-void SelectionEditToolbar::Paint(HDC hdc, editing::MarkupTool active_tool, bool can_undo, bool can_copy_text) const {
+void SelectionEditToolbar::Paint(HDC hdc, editing::MarkupTool active_tool, bool can_undo, bool can_copy_text, bool can_translate) const {
     if (!visible_) {
         return;
     }
@@ -173,7 +178,7 @@ void SelectionEditToolbar::Paint(HDC hdc, editing::MarkupTool active_tool, bool 
         const bool is_active = ocr_mode_ ? button.id.IsCommand(SelectionToolbarCommand::Ocr) :
                                button.id.IsTool() && button.id.tool == active_tool;
         const bool is_primary_action = button.id.IsCommand(SelectionToolbarCommand::Confirm);
-        const bool is_enabled = IsButtonEnabled(button.id, can_undo, can_copy_text);
+        const bool is_enabled = IsButtonEnabled(button.id, can_undo, can_copy_text, can_translate);
         const COLORREF fill_color = !is_enabled
                                         ? kToolbarDisabled
                                         : (is_active ? kToolbarActive

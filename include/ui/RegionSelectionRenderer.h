@@ -46,6 +46,7 @@ struct RegionSelectionRenderModel {
     editing::MarkupTool active_tool = editing::MarkupTool::Select;
     bool can_undo = false;
     bool can_copy_text = false;
+    bool can_translate = false;
 };
 
 class RegionSelectionRenderer {

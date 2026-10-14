@@ -110,6 +110,7 @@ bool RegionSelectionOverlay::HandleKeyDown(WPARAM w_param) {
             ocr_selection_.SelectAll(); RefreshOcrSelection(); return true;
         }
         if (GetKeyState(VK_CONTROL) < 0 && w_param == 'C') { CopyOcrText(); return true; }
+        if (GetKeyState(VK_CONTROL) < 0 && w_param == 'T') { TranslateOcrText(); return true; }
         if (w_param == VK_RETURN) { FinishSelection(true); return true; }
         return true;
     }
@@ -152,6 +153,10 @@ bool RegionSelectionOverlay::HandleToolbarAction(SelectionToolbarButtonId toolba
 
     if (toolbar_action.IsCommand(SelectionToolbarCommand::CopyText)) {
         CopyOcrText();
+        return true;
+    }
+    if (toolbar_action.IsCommand(SelectionToolbarCommand::TranslateText)) {
+        TranslateOcrText();
         return true;
     }
 

@@ -20,6 +20,9 @@ public:
     void SelectWord(ocr::Point point);
     void SelectAll();
     std::wstring SelectedText() const;
+    std::wstring AllText() const;
+    // Joins visual wraps for translation; display/copy text keeps OCR line breaks.
+    std::wstring TranslationText() const;
     std::vector<ocr::Quad> SelectedQuads() const;
 
 private:

@@ -92,7 +92,7 @@ void RegionSelectionRenderer::DrawInstructions(HDC hdc,
     InflateRect(&text_rect, -scale(12), -scale(8));
     if (ocr_mode) {
         DrawTextBlock(hdc, text_rect,
-            L"直接拖动选择截图上的文字，双击选择词语。Ctrl+A 全选，Ctrl+C 或右键复制。点击“返回”继续编辑，Esc 退出。",
+            L"拖动选择文字，Ctrl+A 全选，Ctrl+C 复制。点击“翻译”或 Ctrl+T 英译汉；未选文字时翻译全部。点击“返回”继续编辑，Esc 退出。",
             DT_LEFT | DT_VCENTER | DT_WORDBREAK, panel_style.text_color, dpi);
         return;
     }
@@ -145,7 +145,7 @@ void RegionSelectionRenderer::PaintOverlay(HDC hdc,
         DrawBrushPreview(hdc, client_rect, model.brush_preview);
     }
 
-    toolbar.Paint(hdc, model.active_tool, model.can_undo, model.can_copy_text);
+    toolbar.Paint(hdc, model.active_tool, model.can_undo, model.can_copy_text, model.can_translate);
 }
 
 void RegionSelectionRenderer::DrawSelectionBorder(HDC hdc, const RECT& selection) const {

@@ -75,6 +75,7 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
     instruction_area_ = RECT{};
 
     const auto cleanup = [this]() {
+        translation_window_.Close();
         ocr_stop_.request_stop();
         ++ocr_generation_;
         ocr_mode_ = ocr_busy_ = ocr_launch_pending_ = ocr_dragging_ = false;
@@ -157,6 +158,7 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
             break;
         }
 
+        if (translation_window_.ProcessMessage(message)) continue;
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
@@ -183,6 +185,7 @@ common::Result<std::optional<RegionSelectionResult>> RegionSelectionOverlay::Run
 }
 
 void RegionSelectionOverlay::InitializeSessionState() {
+    translation_window_.Close();
     ocr_stop_.request_stop();
     text_only_ = false;
     ++ocr_generation_;
@@ -239,6 +242,7 @@ void RegionSelectionOverlay::RebuildSourceBuffers() {
 }
 
 void RegionSelectionOverlay::FinishSelection(bool accepted) {
+    translation_window_.Close();
     ocr_stop_.request_stop();
     text_only_ = accepted && ocr_mode_;
     session_.Finish(accepted, CurrentSelection());
@@ -559,6 +563,7 @@ RegionSelectionRenderModel RegionSelectionOverlay::BuildRenderModel(const RECT& 
     model.active_tool = session_.active_tool;
     model.can_undo = CanUndoLastEdit();
     model.can_copy_text = ocr_selection_.HasSelection();
+    model.can_translate = ocr_mode_ && !ocr_busy_ && !ocr_selection_.Empty();
 
     if (HasSelection()) {
         const RECT selection = CurrentSelection();

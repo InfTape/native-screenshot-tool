@@ -1,5 +1,6 @@
 #include <Windows.h>
 #include <TlHelp32.h>
+#include <winrt/base.h>
 
 #include <algorithm>
 #include <cstring>
@@ -124,6 +125,65 @@ capture::CapturedImage TextImage() {
 ocr::Quad Box(float x, float y, float width, float height) {
     return {ocr::Point{x,y}, {x+width,y}, {x+width,y+height}, {x,y+height}};
 }
+ocr::Document WrappedEnglishDocument() {
+    ocr::Document document;
+    document.lines = {
+        {L"Lego sets that were researched and bought for me by @Grok @Bot have", Box(10, 10, 640, 24), {}},
+        {L"arrived and Bot automatically stopped checking the shipping status!", Box(10, 40, 660, 24), {}}};
+    return document;
+}
+void CheckTranslationText() {
+    const auto document = WrappedEnglishDocument();
+    const auto original = document.lines[0].text + L"\r\n" + document.lines[1].text;
+    const auto joined = document.lines[0].text + L" " + document.lines[1].text;
+    ui::OcrTextSelection model;
+    model.SetDocument(document);
+    Require(model.TranslationText() == joined, "English have/arrived visual wrap not joined");
+    Require(model.AllText() == original, "Translation changed the original OCR line breaks");
+    model.SelectAll();
+    Require(model.TranslationText() == joined && model.SelectedText() == original,
+        "Select-all translation/copy did not use separate formatting");
+    model.BeginSelection({669, 52}); model.ExtendSelection({11, 22});
+    Require(model.TranslationText() == joined, "Reverse translation selection differs");
+    // Select only 'have' and 'arrived' across the visual line boundary.
+    const auto have = document.lines[0].text.find(L"have");
+    const float first_character_width = 640.0f / static_cast<float>(document.lines[0].text.size());
+    const float second_character_width = 660.0f / static_cast<float>(document.lines[1].text.size());
+    model.BeginSelection({10.0f + (static_cast<float>(have) + 0.1f) * first_character_width, 22});
+    model.ExtendSelection({10.0f + 6.9f * second_character_width, 52});
+    Require(model.SelectedText() == L"have\r\narrived" && model.TranslationText() == L"have arrived",
+        "Partial cross-line translation included unselected text or lost the wrap");
+
+    auto blocks = document;
+    blocks.lines[1].bounds = Box(10, 100, 660, 24);
+    model.SetDocument(blocks);
+    Require(model.TranslationText() == original, "Separate paragraphs were joined");
+    blocks = document; blocks.lines[0].bounds = Box(10, 10, 640, 36);
+    blocks.lines[1].bounds = Box(10, 52, 660, 20);
+    model.SetDocument(blocks);
+    Require(model.TranslationText() == original, "Title and body were joined");
+    blocks = document; blocks.lines[1].bounds = Box(750, 40, 660, 24);
+    model.SetDocument(blocks);
+    Require(model.TranslationText() == original, "Different columns were joined");
+    blocks.lines = {{L"1. First item", Box(10, 10, 140, 24), {}},
+                    {L"2. Second item", Box(10, 40, 150, 24), {}}};
+    model.SetDocument(blocks);
+    Require(model.TranslationText() == L"1. First item\r\n2. Second item", "List items were joined");
+    blocks.lines[1].text = L"continued on the next line";
+    model.SetDocument(blocks);
+    Require(model.TranslationText() == L"1. First item continued on the next line", "Wrapped list item not joined");
+    blocks.lines[0].text = L"First sentence."; blocks.lines[1].text = L"Second sentence.";
+    model.SetDocument(blocks);
+    Require(model.TranslationText() == L"First sentence.\r\nSecond sentence.", "Sentence boundary was removed");
+    blocks.lines[0].text = L"read-"; blocks.lines[1].text = L"only";
+    model.SetDocument(blocks);
+    Require(model.TranslationText() == L"read-only", "Wrapped hyphenated word split");
+    blocks.lines[0].text = L"trans\u00AD"; blocks.lines[1].text = L"lation";
+    model.SetDocument(blocks);
+    Require(model.TranslationText() == L"translation", "Soft hyphen not removed at a visual wrap");
+    model.Clear();
+    Require(model.TranslationText().empty(), "Cleared OCR document retained translation input");
+}
 void CheckSelectionModel() {
     ocr::Document document;
     document.lines = {{L"AB CD", Box(10,20,100,20),
@@ -143,8 +203,10 @@ void CheckSelectionModel() {
     Require(model.SelectedText() == L"CD", "Double-click word selection incorrect");
     model.SelectAll();
     Require(model.SelectedText() == L"AB CD\r\n中文测试", "Select-all incorrect");
+    Require(model.AllText() == model.SelectedText(), "Full translation input differs from select-all");
     model.BeginSelection({300,200});
     Require(!model.HasSelection(), "Clicking blank area did not clear selection");
+    Require(model.AllText() == L"AB CD\r\n中文测试", "Clearing selection lost full translation input");
     document.lines = {{L"A\U0001F600B", Box(10,20,60,20), {{L"A\U0001F600B",Box(10,20,60,20)}}}};
     model.SetDocument(document);
     model.BeginSelection({31,30}); model.ExtendSelection({49,30});
@@ -161,6 +223,7 @@ struct Probe {
     ocr::Document document;
     std::wstring expected, partial;
     bool blank = false, early_close = false, return_editing = false;
+    bool translate = false, translate_selected = false;
     bool passed = false, found = false, closed = false;
     bool highlighted = false;
     int phase = 0;
@@ -168,6 +231,11 @@ struct Probe {
     std::string error;
 };
 Probe* active_probe = nullptr;
+std::wstring WindowText(HWND window) {
+    std::wstring text(GetWindowTextLengthW(window) + 1, L'\0');
+    const auto length = GetWindowTextW(window, text.data(), static_cast<int>(text.size()));
+    text.resize(length); return text;
+}
 void ClickCommand(HWND window, ui::SelectionToolbarCommand command, bool ocr_mode) {
     ui::SelectionEditToolbar toolbar;
     RECT client{};
@@ -294,6 +362,31 @@ BOOL InspectEditorImpl(HWND window, LPARAM parameter) {
     wchar_t status[1024]{};
     GetWindowTextW(window,status,1024);
     if (wcsstr(status,L"正在识别") && GetTickCount64()-probe.started<15000) return FALSE;
+    if (probe.translate && probe.phase == 1) {
+        std::wstring input = probe.expected;
+        if (probe.translate_selected) {
+            const auto& word = probe.document.lines.front().words.front();
+            const auto center = ClientPoint(Middle(word.bounds[0], word.bounds[2]));
+            SendMessageW(window, WM_LBUTTONDBLCLK, MK_LBUTTON, MAKELPARAM(center.x, center.y));
+            input = word.text;
+        }
+        ClickCommand(window, ui::SelectionToolbarCommand::TranslateText, true);
+        const auto translation = FindWindowW(L"NativeScreenshot.TranslationResultWindow", nullptr);
+        Require(translation && WindowText(GetDlgItem(translation, 100)) == input,
+            "OCR translate did not forward all/selected text");
+        probe.phase = 2;
+        return FALSE;
+    }
+    if (probe.translate && probe.phase == 2) {
+        const auto translation = FindWindowW(L"NativeScreenshot.TranslationResultWindow", nullptr);
+        Require(translation != nullptr, "Translation window disappeared");
+        if (WindowText(GetDlgItem(translation, 102)) == L"正在翻译…") return FALSE;
+        Require(WindowText(GetDlgItem(translation, 102)) == L"翻译完成", "Live inline translation failed");
+        Require(!WindowText(GetDlgItem(translation, 101)).empty(), "Live translation empty");
+        SendMessageW(translation, WM_CLOSE, 0, 0);
+        Require(IsWindow(window), "Closing translation closed OCR overlay");
+        probe.phase = 3;
+    }
     if (probe.blank) {
         Require(wcsstr(status,L"未识别到文字")!=nullptr,"Blank OCR did not finish with an empty result");
         CtrlKey(window,'A');ClickCommand(window,ui::SelectionToolbarCommand::CopyText,true);
@@ -369,17 +462,18 @@ void CALLBACK InspectTimer(HWND,UINT,UINT_PTR timer,DWORD) {
         KillTimer(nullptr,timer);
     }
 }
-void CheckOverlay(const capture::CapturedImage& image,const ocr::Document& document) {
+void CheckOverlay(const capture::CapturedImage& image,const ocr::Document& document, bool live_translation) {
     capture::DesktopSnapshot desktop;
     desktop.origin_x=40;desktop.origin_y=40;
     desktop.image={900,600,std::vector<std::uint8_t>(900*600*4,200)};
     ui::RegionSelectionOverlay overlay(GetModuleHandleW(nullptr));
     // Early exit followed immediately by another OCR session exercises stale
     // asynchronous completion on the same persistent overlay instance.
-    for (int scenario=0;scenario<4;++scenario) {
+    for (int scenario=0;scenario<(live_translation ? 6 : 4);++scenario) {
         Probe probe;
         probe.document=document;probe.expected=document.text;
         probe.early_close=scenario==0;probe.blank=scenario==2;probe.return_editing=scenario==1;
+        probe.translate=scenario>=4;probe.translate_selected=scenario==5;
         {
             Require(OpenClipboard(nullptr)!=FALSE,"Cannot prepare isolated clipboard");
             EmptyClipboard();
@@ -410,7 +504,7 @@ void CheckOverlay(const capture::CapturedImage& image,const ocr::Document& docum
 }
 }
 
-int main() {
+int main(int argc, char** argv) {
     if (const auto worker=ocr::RunWorkerIfRequested()) return *worker;
     try {
         common::EnableDpiAwareness();
@@ -440,12 +534,20 @@ int main() {
         const auto empty = service.Recognize(tiny);
         Require(empty && empty.Value().empty(), "Tiny transparent selection must produce empty text");
         CheckSelectionModel();
+        CheckTranslationText();
         const auto document=service.RecognizeDocument(image);
         Require(document && document.Value().text==result.Value(),"Document text differs from plain text");
         Require(document.Value().lines.size()>=2 && !document.Value().lines.front().words.empty(),"Missing line/word geometry");
         const auto bounds=document.Value().lines.front().bounds;
         Require(bounds[0].x>15 && bounds[0].y>15 && bounds[2].x<720 && bounds[2].y<80,"OCR bounds outside source text");
-        CheckOverlay(image,document.Value());
+        CheckOverlay(image,document.Value(), argc > 1 && std::string_view(argv[1]) == "--live-translation");
+        if (argc > 1 && std::string_view(argv[1]) == "--live-translation") {
+            ui::OcrTextSelection wrapped;
+            wrapped.SetDocument(WrappedEnglishDocument());
+            const auto translated = translation::TranslateEnglishToChinese(wrapped.TranslationText());
+            Require(static_cast<bool>(translated), "Live wrapped English translation failed");
+            std::cout << "Wrapped English translation: " << winrt::to_string(translated.Value()) << '\n';
+        }
         CheckIsolation();
         std::cout << "OneOCR: Chinese/English, geometry, process isolation/cancellation, invalid inputs, pixel preservation,\n"
                      "cross-line/reverse/partial/rotated/surrogate selection, inline highlight, Unicode clipboard,\n"

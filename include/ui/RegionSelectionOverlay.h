@@ -19,6 +19,7 @@
 #include "ui/SelectionSession.h"
 #include "ui/OcrTextSelection.h"
 #include "ocr/OcrWorker.h"
+#include "ui/TranslationResultWindow.h"
 
 namespace ui {
 
@@ -115,6 +116,7 @@ private:
     void LaunchOcr();
     void RefreshOcrSelection();
     void CopyOcrText();
+    void TranslateOcrText();
     void ShowOcrContextMenu(POINT screen_point);
     bool MeasureOcrMenuItem(MEASUREITEMSTRUCT& item) const;
     bool DrawOcrMenuItem(const DRAWITEMSTRUCT& item) const;
@@ -144,6 +146,7 @@ private:
     common::UniqueGdiObject<HFONT> ocr_menu_font_;
     UINT ocr_menu_dpi_ = 96;
     OcrTextSelection ocr_selection_;
+    TranslationResultWindow translation_window_;
     std::uint64_t ocr_generation_ = 0, ocr_job_generation_ = 0;
     static constexpr UINT_PTR kOcrPollTimer = 0x4F43;
     // Cancellation kills only this request's child process. The UI owns no OCR

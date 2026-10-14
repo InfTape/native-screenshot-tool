@@ -7,7 +7,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(GOOGLE_TRANSLATION_SOURCES
+    src/translation/GoogleTranslationService.cpp
+    src/ui/TranslationResultWindow.cpp
+    include/translation/GoogleTranslationService.h
+    include/ui/TranslationResultWindow.h
+)
+
 add_executable(NativeScreenshot WIN32
+    ${GOOGLE_TRANSLATION_SOURCES}
     src/main.cpp
     src/App.rc
     src/app/App.cpp
@@ -120,6 +128,7 @@ target_link_libraries(NativeScreenshot PRIVATE
     D3d11
     Dxgi
     Windowsapp
+    Winhttp
     Dwmapi
     Gdi32
     Msimg32
@@ -152,6 +161,7 @@ if(BUILD_TESTING)
     set_tests_properties(MarkupHistoryIntegration PROPERTIES TIMEOUT 30)
 
     add_executable(OneOcrIntegration
+        ${GOOGLE_TRANSLATION_SOURCES}
         tests/OneOcrIntegration.cpp
         src/ocr/OneOcrService.cpp
         src/ocr/OcrWorker.cpp
@@ -178,7 +188,7 @@ if(BUILD_TESTING)
     if(MSVC)
         target_compile_options(OneOcrIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
     endif()
-    target_link_libraries(OneOcrIntegration PRIVATE Windowsapp Ole32 Shell32 Gdi32 User32 Msimg32 D2d1)
+    target_link_libraries(OneOcrIntegration PRIVATE Windowsapp Winhttp Ole32 Shell32 Gdi32 User32 Msimg32 D2d1)
     add_test(NAME OneOcrIntegration COMMAND OneOcrIntegration)
     set_tests_properties(OneOcrIntegration PROPERTIES TIMEOUT 60)
 
@@ -205,6 +215,7 @@ if(BUILD_TESTING)
     add_test(NAME GifRecordingIntegration COMMAND GifRecordingIntegration)
     set_tests_properties(GifRecordingIntegration PROPERTIES TIMEOUT 30)
     add_executable(UiTypographyIntegration
+        ${GOOGLE_TRANSLATION_SOURCES}
         tests/UiTypographyIntegration.cpp
         src/ocr/OneOcrService.cpp
         src/ocr/OcrWorker.cpp
@@ -234,9 +245,19 @@ if(BUILD_TESTING)
     if(MSVC)
         target_compile_options(UiTypographyIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
     endif()
-    target_link_libraries(UiTypographyIntegration PRIVATE Comctl32 Shell32 Gdi32 User32 Msimg32 D2d1 Ole32 Windowsapp)
+    target_link_libraries(UiTypographyIntegration PRIVATE Comctl32 Shell32 Gdi32 User32 Msimg32 D2d1 Ole32 Windowsapp Winhttp)
     add_test(NAME UiTypographyIntegration COMMAND UiTypographyIntegration)
     set_tests_properties(UiTypographyIntegration PROPERTIES TIMEOUT 15)
+
+    add_executable(GoogleTranslationIntegration tests/GoogleTranslationIntegration.cpp src/common/DpiAwareness.cpp ${GOOGLE_TRANSLATION_SOURCES})
+    target_include_directories(GoogleTranslationIntegration PRIVATE include)
+    target_compile_definitions(GoogleTranslationIntegration PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(GoogleTranslationIntegration PRIVATE /W4 /EHsc /permissive- /utf-8)
+    endif()
+    target_link_libraries(GoogleTranslationIntegration PRIVATE Windowsapp Winhttp Ole32 Gdi32 User32)
+    add_test(NAME GoogleTranslationIntegration COMMAND GoogleTranslationIntegration)
+    set_tests_properties(GoogleTranslationIntegration PROPERTIES TIMEOUT 15)
 
     add_executable(ScreenRecordingIntegration
         tests/ScreenRecordingIntegration.cpp

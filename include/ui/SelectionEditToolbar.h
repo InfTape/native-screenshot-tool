@@ -15,6 +15,7 @@ enum class SelectionToolbarCommand {
     Undo,
     Ocr,
     CopyText,
+    TranslateText,
     Confirm,
     Cancel,
 };
@@ -70,7 +71,7 @@ public:
     bool IsVisible() const;
     const RECT& Bounds() const;
     SelectionToolbarButtonId HitTest(const POINT& point) const;
-    void Paint(HDC hdc, editing::MarkupTool active_tool, bool can_undo, bool can_copy_text = false) const;
+    void Paint(HDC hdc, editing::MarkupTool active_tool, bool can_undo, bool can_copy_text = false, bool can_translate = false) const;
 
 private:
     struct Button {
