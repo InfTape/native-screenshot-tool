@@ -47,7 +47,7 @@ common::Result<std::wstring> NetworkFailure(std::stop_token stop, DWORD error = 
 }
 common::Result<std::wstring> TranslateChunk(std::wstring_view text, std::stop_token stop) {
     if (stop.stop_requested()) return NetworkFailure(stop);
-    const auto body = BuildGoogleRpcBody(text);
+    const auto path = BuildGoogleTranslationPath(text);
     InternetHandle session{WinHttpOpen(
         L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36",
         WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
@@ -56,8 +56,7 @@ common::Result<std::wstring> TranslateChunk(std::wstring_view text, std::stop_to
     InternetHandle connection{WinHttpConnect(session.value, L"translate.google.com", INTERNET_DEFAULT_HTTPS_PORT, 0)};
     if (!connection.value) return NetworkFailure(stop);
     CancellableRequest request;
-    request.value = WinHttpOpenRequest(connection.value, L"POST",
-        L"/_/TranslateWebserverUi/data/batchexecute?rpcids=MkEWBc", nullptr,
+    request.value = WinHttpOpenRequest(connection.value, L"GET", path.c_str(), nullptr,
         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
     if (!request.value) return NetworkFailure(stop);
     // Keep a local value for WinHTTP operations; the stop callback can close it
@@ -65,8 +64,8 @@ common::Result<std::wstring> TranslateChunk(std::wstring_view text, std::stop_to
     const auto handle = request.value;
     std::stop_callback cancellation(stop, [&request] { request.Close(); });
     if (stop.stop_requested()) return NetworkFailure(stop);
-    if (!WinHttpSendRequest(handle, L"Content-Type: application/x-www-form-urlencoded\r\n", static_cast<DWORD>(-1),
-            const_cast<char*>(body.data()), static_cast<DWORD>(body.size()), static_cast<DWORD>(body.size()), 0) ||
+    if (!WinHttpSendRequest(handle, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
         !WinHttpReceiveResponse(handle, nullptr)) return NetworkFailure(stop);
     DWORD status = 0, status_size = sizeof(status);
     if (!WinHttpQueryHeaders(handle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
@@ -85,68 +84,39 @@ common::Result<std::wstring> TranslateChunk(std::wstring_view text, std::stop_to
         response.append(buffer, read);
     }
     if (stop.stop_requested()) return NetworkFailure(stop);
-    return ParseGoogleRpcResponse(response);
+    return ParseGoogleTranslationResponse(response);
 }
 }
 
-std::string BuildGoogleRpcBody(std::wstring_view text) {
-    // Name-based activation avoids C++/WinRT's process-wide factory cache.
-    // A request may be the last MTA thread: cached factories become invalid
-    // when that apartment shuts down, and cannot be reused by the next worker.
-    const auto arrays = winrt::get_activation_factory<>(L"Windows.Data.Json.JsonArray");
-    const auto values = winrt::get_activation_factory<IJsonValueStatics>(L"Windows.Data.Json.JsonValue");
-    const auto nulls = winrt::get_activation_factory<IJsonValueStatics2>(L"Windows.Data.Json.JsonValue");
-    auto arguments = arrays.ActivateInstance<JsonArray>();
-    arguments.Append(values.CreateStringValue(winrt::hstring(text)));
-    arguments.Append(values.CreateStringValue(L"en"));
-    arguments.Append(values.CreateStringValue(L"zh-CN"));
-    arguments.Append(values.CreateNumberValue(1));
-    auto payload = arrays.ActivateInstance<JsonArray>();
-    payload.Append(arguments); payload.Append(arrays.ActivateInstance<JsonArray>());
-    auto rpc = arrays.ActivateInstance<JsonArray>();
-    rpc.Append(values.CreateStringValue(L"MkEWBc"));
-    rpc.Append(values.CreateStringValue(payload.Stringify()));
-    rpc.Append(nulls.CreateNullValue());
-    rpc.Append(values.CreateStringValue(L"generic"));
-    auto batch = arrays.ActivateInstance<JsonArray>();
-    auto envelope = arrays.ActivateInstance<JsonArray>();
-    batch.Append(rpc); envelope.Append(batch);
-    return "f.req=" + EncodeFormValue(winrt::to_string(envelope.Stringify()));
+std::wstring BuildGoogleTranslationPath(std::wstring_view text) {
+    // Encode the UTF-8 bytes of q, including literal &, +, %, # and newlines.
+    // Use Pot's legacy endpoint parameters; both languages stay explicit.
+    return L"/translate_a/single?dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t"
+        L"&client=gtx&sl=en&tl=zh-CN&hl=zh-CN&ie=UTF-8&oe=UTF-8&otf=1&ssel=0&tsel=0&kc=7&q=" +
+        std::wstring(winrt::to_hstring(EncodeFormValue(winrt::to_string(winrt::hstring(text)))));
 }
 
-common::Result<std::wstring> ParseGoogleRpcResponse(std::string_view response) {
+common::Result<std::wstring> ParseGoogleTranslationResponse(std::string_view response) {
     try {
+        // Name-based activation avoids cached factories surviving the last MTA
+        // worker and pointing into freed memory when the next request starts.
         const auto arrays = winrt::get_activation_factory<IJsonArrayStatics>(L"Windows.Data.Json.JsonArray");
-        // Accept the web RPC's anti-XSSI prefix and optional numeric frame sizes.
-        while (!response.empty()) {
-            const auto newline = response.find('\n');
-            const auto line = response.substr(0, newline);
-            const auto first = line.find_first_not_of(" \r\t");
-            if (first != std::string_view::npos && line[first] == '[') {
-                JsonArray records{nullptr};
-                if (arrays.TryParse(winrt::to_hstring(line.substr(first)), records)) {
-                    for (const auto& record_value : records) {
-                        if (record_value.ValueType() != JsonValueType::Array) continue;
-                        const auto record = record_value.GetArray();
-                        if (record.Size() < 3 || record.GetAt(1).ValueType() != JsonValueType::String ||
-                            record.GetStringAt(1) != L"MkEWBc" || record.GetAt(2).ValueType() != JsonValueType::String) continue;
-                        const auto root = arrays.Parse(record.GetStringAt(2));
-                        const auto entry = root.GetArrayAt(1).GetArrayAt(0).GetArrayAt(0);
-                        std::wstring translated;
-                        if (entry.Size() > 5 && entry.GetAt(5).ValueType() == JsonValueType::Array) {
-                            for (const auto& part : entry.GetArrayAt(5)) {
-                                if (!translated.empty()) translated += L' ';
-                                translated += part.GetArray().GetStringAt(0).c_str();
-                            }
-                        } else {
-                            translated = entry.GetStringAt(0).c_str();
-                        }
-                        if (!translated.empty()) return common::Result<std::wstring>::Success(std::move(translated));
-                    }
-                }
+        JsonArray root{nullptr};
+        if (arrays.TryParse(winrt::to_hstring(response), root) && root.Size() > 0 &&
+                root.GetAt(0).ValueType() == JsonValueType::Array) {
+            std::wstring translated;
+            for (const auto& value : root.GetArrayAt(0)) {
+                if (value.ValueType() != JsonValueType::Array) continue;
+                const auto row = value.GetArray();
+                // Other columns contain source text, pronunciation and metadata.
+                if (row.Size() > 0 && row.GetAt(0).ValueType() == JsonValueType::String)
+                    translated += row.GetStringAt(0).c_str();
             }
-            if (newline == std::string_view::npos) break;
-            response.remove_prefix(newline + 1);
+            const auto first = translated.find_first_not_of(L" \t\r\n");
+            if (first != std::wstring::npos) {
+                const auto last = translated.find_last_not_of(L" \t\r\n");
+                return common::Result<std::wstring>::Success(translated.substr(first, last - first + 1));
+            }
         }
     } catch (const winrt::hresult_error&) {
         // An endpoint change must produce a visible error, not an empty result.

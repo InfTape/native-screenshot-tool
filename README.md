@@ -98,11 +98,16 @@ ctest --test-dir build -C Release --output-on-failure
    翻译在后台进行，关闭结果窗口、返回编辑或退出截图会取消请求；网络失败时保留原文和 OCR 结果，并显示错误，可再次点击“翻译”重试。
 
 OCR 识别仍然完全离线；只有主动触发翻译时，待翻译的文字才直接发送到谷歌服务器，不上传截图。
-翻译使用 Google 翻译网页版的 `MkEWBc` RPC，参考
-[GTranslate.GoogleTranslator2](https://github.com/d4n3436/GTranslate/blob/master/src/GTranslate/Translators/GoogleTranslator2.cs)，
+翻译使用 Google 翻译旧版网页接口 `https://translate.google.com/translate_a/single`（`client=gtx`），请求参数参考
+[Pot 的 Google 翻译实现](https://github.com/pot-app/pot-desktop/blob/master/src/services/translate/google/index.jsx)，
 以 Windows 自带 WinHTTP 和 JSON API 实现，无需 Python、.NET、额外运行时或 Google Cloud API Key。
-超过接口单次 5000 UTF-16 字符限制的文字会按换行/空白分段，避免拆开 Unicode 代理对。
+单次发送最多 5000 UTF-16 字符，超过时按换行/空白分段，避免拆开 Unicode 代理对。
 这是非官方网页接口，可能限流或发生变化；程序不会绕过限流，失败时需稍后重试。
+
+新版 `MkEWBc` RPC 的完整实现保留在 Git 分支 `translation/google-rpc`；`main` 使用旧版接口。
+切换实现时先提交或暂存自己的修改，再运行 `git switch translation/google-rpc` 或 `git switch main`，然后重新编译。
+程序运行时不提供接口切换选项。
+
 `GoogleTranslationIntegration` 默认只做离线协议和窗口生命周期测试；实际联网验证可运行
 `build\Release\GoogleTranslationIntegration.exe --live`。
 OCR 按钮到谷歌接口的完整链路可运行 `build\Release\OneOcrIntegration.exe --live-translation`，

@@ -21,43 +21,48 @@ std::wstring Text(HWND window) {
     value.resize(length); return value;
 }
 std::string Fixture(std::wstring_view translation, bool chunks = false) {
-    JsonArray entry; entry.Append(JsonValue::CreateStringValue(winrt::hstring(translation)));
-    if (chunks) {
-        while (entry.Size() < 5) entry.Append(JsonValue::CreateNullValue());
-        entry.Append(JsonArray::Parse(L"[[\"第一句。\"],[\"第二句。\"]]"));
+    JsonArray rows;
+    if (chunks) rows = JsonArray::Parse(L"[[\"第一句。\",\"First sentence.\"],[\"第二句。\",\"Second sentence.\"],[null,null,null,\"phonetic\"]]");
+    else {
+        JsonArray entry; entry.Append(JsonValue::CreateStringValue(winrt::hstring(translation)));
+        entry.Append(JsonValue::CreateStringValue(L"Original source, not translation"));
+        rows.Append(entry);
     }
-    JsonArray entries, group, root;
-    entries.Append(entry); group.Append(entries);
-    root.Append(JsonValue::CreateNullValue()); root.Append(group);
-    JsonArray row, records;
-    row.Append(JsonValue::CreateStringValue(L"wrb.fr"));
-    row.Append(JsonValue::CreateStringValue(L"MkEWBc"));
-    row.Append(JsonValue::CreateStringValue(root.Stringify()));
-    records.Append(row);
-    return ")]}'\n\n123\n" + winrt::to_string(records.Stringify()) + "\n";
+    JsonArray root;
+    root.Append(rows);
+    // Dictionary and language metadata must never become translation text.
+    root.Append(JsonArray::Parse(L"[[\"noun\",[\"dictionary entry\"]]]"));
+    root.Append(JsonValue::CreateStringValue(L"en"));
+    return winrt::to_string(root.Stringify());
 }
 void CheckProtocol() {
-    const std::wstring input = L"\"Hello\" & 100%\r\n中文 😀";
-    const auto body = translation::BuildGoogleRpcBody(input);
-    Require(body.starts_with("f.req="), "Invalid form field");
+    const std::wstring input = L"\"Hello\" & 100% + ? #\r\n中文 😀";
+    const auto path = translation::BuildGoogleTranslationPath(input);
+    Require(path.starts_with(L"/translate_a/single?"), "Wrong legacy endpoint");
+    Require(path.find(L"&client=gtx&sl=en&tl=zh-CN&") != std::wstring::npos, "Wrong client or language pair");
+    const auto query = path.find(L"&q=");
+    Require(query != std::wstring::npos, "Missing source text query");
+    const auto encoded = winrt::to_string(winrt::hstring(path.substr(query + 3)));
+    Require(encoded.find_first_of("&+?#\r\n") == std::string::npos, "Unescaped characters alter the request query");
     std::string decoded;
-    for (std::size_t index = 6; index < body.size(); ++index) {
-        if (body[index] == '%') {
-            decoded += static_cast<char>(std::stoi(body.substr(index + 1, 2), nullptr, 16)); index += 2;
-        } else decoded += body[index];
+    for (std::size_t index = 0; index < encoded.size(); ++index) {
+        if (encoded[index] == '%') {
+            decoded += static_cast<char>(std::stoi(encoded.substr(index + 1, 2), nullptr, 16)); index += 2;
+        } else decoded += encoded[index];
     }
-    const auto rpc = JsonArray::Parse(winrt::to_hstring(decoded)).GetArrayAt(0).GetArrayAt(0);
-    Require(rpc.GetStringAt(0) == L"MkEWBc", "Wrong RPC identifier");
-    const auto arguments = JsonArray::Parse(rpc.GetStringAt(1)).GetArrayAt(0);
-    Require(arguments.GetStringAt(0) == input, "Quotes, newlines or Unicode corrupted in request");
-    Require(arguments.GetStringAt(1) == L"en" && arguments.GetStringAt(2) == L"zh-CN", "Default language pair incorrect");
-    auto result = translation::ParseGoogleRpcResponse(Fixture(L"窗口化游戏优化\r\n你好 😀"));
+    Require(winrt::to_hstring(decoded) == input, "Quotes, newlines or Unicode corrupted in request");
+    auto result = translation::ParseGoogleTranslationResponse(Fixture(L"窗口化游戏优化\r\n你好 😀"));
     Require(result && result.Value() == L"窗口化游戏优化\r\n你好 😀", "Unicode/multiline response corrupted");
-    result = translation::ParseGoogleRpcResponse(Fixture(L"unused", true));
-    Require(result && result.Value() == L"第一句。 第二句。", "Translation segments not joined");
-    Require(!translation::ParseGoogleRpcResponse("<html>captcha</html>"), "HTML response reported as success");
-    Require(!translation::ParseGoogleRpcResponse("[[\"wrb.fr\",\"MkEWBc\",\"[]\"]]"), "Malformed RPC reported as success");
-    Require(!translation::ParseGoogleRpcResponse(Fixture(L"")), "Empty translation reported as success");
+    result = translation::ParseGoogleTranslationResponse(Fixture(L"unused", true));
+    Require(result && result.Value() == L"第一句。第二句。", "Segments, pronunciation or dictionary metadata parsed incorrectly");
+    result = translation::ParseGoogleTranslationResponse("\n  " + Fixture(L" \t你好\r\n ") + "\n");
+    Require(result && result.Value() == L"你好", "Response whitespace not trimmed");
+    Require(!translation::ParseGoogleTranslationResponse("<html>captcha</html>"), "HTML response reported as success");
+    Require(!translation::ParseGoogleTranslationResponse("[[\"wrb.fr\",\"MkEWBc\",\"[]\"]]"), "RPC response reported as legacy success");
+    Require(!translation::ParseGoogleTranslationResponse("[null]"), "Null result reported as success");
+    Require(!translation::ParseGoogleTranslationResponse("[[[\"incomplete\"]]"), "Malformed JSON reported as success");
+    Require(!translation::ParseGoogleTranslationResponse(Fixture(L"")), "Empty translation reported as success");
+    Require(!translation::ParseGoogleTranslationResponse(Fixture(L" \r\n")), "Blank translation reported as success");
     std::wstring long_text(4999, L'x'); long_text += L"😀Z\n"; long_text += std::wstring(6000, L'y');
     const auto chunks = translation::SplitTranslationText(long_text);
     std::wstring rejoined;
@@ -170,11 +175,10 @@ int main(int argc, char** argv) {
         for (int index = 0; index < 3; ++index) {
             auto worker = std::async(std::launch::async, [] {
                 winrt::init_apartment(winrt::apartment_type::multi_threaded);
-                const auto body = translation::BuildGoogleRpcBody(L"Hello");
-                const auto result = translation::ParseGoogleRpcResponse(
-                    R"([["wrb.fr","MkEWBc","[null,[[[\"你好\"]]]]"]])");
+                const auto path = translation::BuildGoogleTranslationPath(L"Hello");
+                const auto result = translation::ParseGoogleTranslationResponse(R"([[["你好","Hello"]],null,"en"])");
                 winrt::uninit_apartment();
-                return !body.empty() && result && result.Value() == L"你好";
+                return !path.empty() && result && result.Value() == L"你好";
             });
             Require(worker.get(), "Repeated isolated translation workers failed");
         }
@@ -184,7 +188,7 @@ int main(int argc, char** argv) {
             const auto result = translation::TranslateEnglishToChinese(L"Optimizations for windowed games");
             Require(static_cast<bool>(result), result ? "" : winrt::to_string(result.Error()).c_str());
             Require(result.Value().find_first_of(L"窗口游戏优化") != std::wstring::npos, "Live response is not Chinese");
-            std::cout << "Live Google RPC: " << winrt::to_string(result.Value()) << '\n';
+            std::cout << "Live Google legacy endpoint: " << winrt::to_string(result.Value()) << '\n';
             std::stop_source stop;
             auto pending = std::async(std::launch::async, [&] {
                 return translation::TranslateEnglishToChinese(L"Cancel this translation request", stop.get_token());
