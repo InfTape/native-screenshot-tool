@@ -61,6 +61,10 @@ void ValidateGif(const std::filesystem::path& path, UINT width, UINT height, boo
 
 LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM w_param, LPARAM l_param) {
     if (message == WM_DESTROY && GetWindowLongPtrW(window, GWLP_USERDATA) == 2) { PostQuitMessage(0); return 0; }
+    if (message == WM_TIMER) {
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
+    }
     if (message == WM_APP + 11) {
         SetWindowPos(window, nullptr, 420, 80, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
         return 0;
@@ -81,6 +85,25 @@ LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM w_param, LPARAM l
         const HDC dc = message == WM_PAINT ? BeginPaint(window, &paint) : reinterpret_cast<HDC>(w_param);
         RECT bounds{};
         GetClientRect(window, &bounds);
+        if (GetWindowLongPtrW(window, GWLP_USERDATA) == 4) {
+            // Changing detailed content exercises rate control, unlike a static desktop.
+            const DWORD phase = GetTickCount() / 33;
+            for (int y = 0; y < bounds.bottom; y += 8) {
+                for (int x = 0; x < bounds.right; x += 8) {
+                    DWORD value = (static_cast<DWORD>(x / 8) * 73856093u) ^
+                        (static_cast<DWORD>(y / 8) * 19349663u) ^ (phase * 83492791u);
+                    value = (value ^ (value >> 16)) * 0x7feb352du;
+                    value = (value ^ (value >> 15)) * 0x846ca68bu;
+                    value ^= value >> 16;
+                    const HBRUSH brush = CreateSolidBrush(RGB(value & 255, (value >> 8) & 255, (value >> 16) & 255));
+                    RECT tile{x, y, x + 8, y + 8};
+                    FillRect(dc, &tile, brush);
+                    DeleteObject(brush);
+                }
+            }
+            if (message == WM_PAINT) EndPaint(window, &paint);
+            return 0;
+        }
         if (GetWindowLongPtrW(window, GWLP_USERDATA) == 3) {
             FillRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
             // Thin text and alternating single-pixel lines reveal resampling and
@@ -123,14 +146,19 @@ struct WindowFixture {
     HWND window = nullptr;
     DWORD thread_id = 0;
     std::thread thread;
-    WindowFixture(int width = 321, int height = 241, bool quality = false, DWORD style = WS_POPUP) {
+    WindowFixture(int width = 321, int height = 241, bool quality = false, DWORD style = WS_POPUP,
+                  bool motion = false) {
         std::promise<std::pair<HWND, DWORD>> ready;
         auto future = ready.get_future();
-        thread = std::thread([signal = std::move(ready), width, height, quality, style]() mutable {
-            HWND target = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+        thread = std::thread([signal = std::move(ready), width, height, quality, style, motion]() mutable {
+            HWND target = CreateWindowExW(WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
                 L"NativeScreenshot.RecordingTest", L"Window recording test", style,
                 350, 60, width, height, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
             if (quality) SetWindowLongPtrW(target, GWLP_USERDATA, 3);
+            if (motion) {
+                SetWindowLongPtrW(target, GWLP_USERDATA, 4);
+                SetTimer(target, 1, 33, nullptr);
+            }
             ShowWindow(target, SW_SHOWNOACTIVATE);
             UpdateWindow(target);
             DwmFlush();
@@ -184,7 +212,7 @@ void CheckTextQuality(const BYTE* decoded, LONG stride, const capture::CapturedI
     Require(retention >= 0.99, "thin dark strokes must survive encoding");
 }
 
-void ValidateVideo(const std::filesystem::path& path, UINT32 expected_width, UINT32 expected_height,
+double ValidateVideo(const std::filesystem::path& path, UINT32 expected_width, UINT32 expected_height,
                    bool check_orientation = false, double minimum_seconds = 0.0,
                    const capture::CapturedImage* quality_reference = nullptr) {
     ComPtr<IMFAttributes> attributes;
@@ -268,6 +296,10 @@ void ValidateVideo(const std::filesystem::path& path, UINT32 expected_width, UIN
     Require(frames > 0, "recording must contain frames");
     Require((last_time + last_duration) / 10'000'000.0 >= minimum_seconds, "real recording duration");
     std::cout << "Decoded " << frames << " H.264 frames at " << width << "x" << height << '\n';
+    const double seconds = (last_time + last_duration) / 10'000'000.0;
+    std::cout << "Encoded bytes=" << std::filesystem::file_size(path) << ", duration=" << seconds
+              << " s, average=" << std::filesystem::file_size(path) * 8 / seconds / 1'000'000 << " Mbps\n";
+    return seconds;
 }
 
 int wmain(int argument_count, wchar_t** arguments) {
@@ -516,6 +548,19 @@ int wmain(int argument_count, wchar_t** arguments) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         Require(static_cast<bool>(recorder.Stop()), "save native 4K text recording");
         ValidateVideo(quality_path, 3840, 2160, false, 0, &quality_reference.Value());
+        {
+            WindowFixture motion_target(1920, 1080, false, WS_POPUP, true);
+            const auto motion_path = root / L"motion-bitrate-1080p.mp4";
+            Require(static_cast<bool>(recorder.StartWindow(motion_target.window, motion_path.wstring())),
+                    "start changing detailed 1080p content");
+            std::this_thread::sleep_for(std::chrono::seconds(4));
+            Require(static_cast<bool>(recorder.Stop()), "save changing detailed content");
+            const double seconds = ValidateVideo(motion_path, 1920, 1080, false, 3.8);
+            // Allow startup/keyframe and container overhead above the 9.3 Mbps
+            // requested peak, while catching excessive output growth.
+            Require(std::filesystem::file_size(motion_path) * 8 / seconds < 12'000'000,
+                    "detailed moving content must stay within the recording size budget");
+        }
         MFShutdown();
         CoUninitialize();
         DestroyWindow(fixture);

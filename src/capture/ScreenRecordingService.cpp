@@ -59,7 +59,7 @@ void SetVideoType(IMFMediaType* type, const GUID& format, UINT32 width, UINT32 h
     Check(MFSetAttributeRatio(type, MF_MT_PIXEL_ASPECT_RATIO, 1, 1));
 }
 
-void ConfigureQuality(IMFSinkWriter* writer, DWORD stream_index) {
+void ConfigureEncoding(IMFSinkWriter* writer, DWORD stream_index, UINT32 bitrate) {
     ComPtr<ICodecAPI> codec;
     if (FAILED(writer->GetServiceForStream(stream_index, GUID_NULL, IID_PPV_ARGS(&codec)))) return;
     const auto set_uint = [&codec](const GUID& property, ULONG value) {
@@ -68,11 +68,20 @@ void ConfigureQuality(IMFSinkWriter* writer, DWORD stream_index) {
         setting.ulVal = value;
         return codec->SetValue(&property, &setting);
     };
-    // Windows 8+ accepts these settings after the media types have been set.
-    // Keep the generous resolution-dependent bitrate if quality VBR is unavailable.
-    if (SUCCEEDED(set_uint(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_Quality))) {
-        set_uint(CODECAPI_AVEncCommonQuality, 100);
-        set_uint(CODECAPI_AVEncVideoEncodeQP, 16);
+    // Quality-only VBR ignores the average bitrate and can grow without a size
+    // budget. Prefer constrained VBR with headroom for text, scrolling and cuts.
+    const bool constrained = SUCCEEDED(set_uint(CODECAPI_AVEncCommonRateControlMode,
+                                                eAVEncCommonRateControlMode_PeakConstrainedVBR));
+    const bool mean_set = SUCCEEDED(set_uint(CODECAPI_AVEncCommonMeanBitRate, bitrate));
+    const bool peak_set = constrained &&
+        SUCCEEDED(set_uint(CODECAPI_AVEncCommonMaxBitRate, bitrate + bitrate / 2));
+    if (!constrained || !mean_set || !peak_set) {
+        // The output media type also carries this budget for encoders without
+        // ICodecAPI. Older drivers may support only ordinary VBR or CBR.
+        if (FAILED(set_uint(CODECAPI_AVEncCommonRateControlMode,
+                            eAVEncCommonRateControlMode_UnconstrainedVBR))) {
+            Check(set_uint(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR));
+        }
     }
     set_uint(CODECAPI_AVEncCommonQualityVsSpeed, 75);
     set_uint(CODECAPI_AVEncMPVGOPSize, kFrameRate * 2);
@@ -212,8 +221,10 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
             SetVideoType(output.Get(), MFVideoFormat_H264, width, height);
             Check(output->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High));
             const auto bitrate = std::clamp<unsigned long long>(
-                static_cast<unsigned long long>(width) * height * kFrameRate / 3,
-                12'000'000, 200'000'000);
+                // 0.10 bits per source pixel per frame: about 6.2 Mbps at 1080p,
+                // 11.1 Mbps at 1440p and 24.9 Mbps at 4K, without resampling text.
+                static_cast<unsigned long long>(width) * height * kFrameRate / 10,
+                750'000, 40'000'000);
             Check(output->SetUINT32(MF_MT_AVG_BITRATE, static_cast<UINT32>(bitrate)));
             Check(writer->AddStream(output.Get(), &stream_index));
             ComPtr<IMFMediaType> input;
@@ -221,7 +232,7 @@ void ScreenRecordingService::Record(RECT region, HWND window, std::wstring path,
             SetVideoType(input.Get(), MFVideoFormat_RGB32, width, height);
             stage = L"配置视频编码器";
             Check(writer->SetInputMediaType(stream_index, input.Get(), nullptr));
-            ConfigureQuality(writer.Get(), stream_index);
+            ConfigureEncoding(writer.Get(), stream_index, static_cast<UINT32>(bitrate));
             Check(writer->BeginWriting());
             writing = true;
         }

@@ -812,6 +812,18 @@ common::Result<std::wstring> MainWindow::ResolveDefaultSaveDirectory() const {
     return common::Result<std::wstring>::Failure(L"无法解析默认保存目录。");
 }
 
+common::Result<std::wstring> MainWindow::ResolveRecordingSaveDirectory() const {
+    PWSTR known_folder_path = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(FOLDERID_Videos, KF_FLAG_CREATE, nullptr, &known_folder_path);
+    if (FAILED(result) || known_folder_path == nullptr) {
+        CoTaskMemFree(known_folder_path);
+        return common::Result<std::wstring>::Failure(L"无法解析系统视频文件夹。请检查视频文件夹是否可访问。");
+    }
+    const std::filesystem::path videos_path(known_folder_path);
+    CoTaskMemFree(known_folder_path);
+    return common::Result<std::wstring>::Success((videos_path / L"NativeScreenshot").wstring());
+}
+
 bool MainWindow::EnsureSaveDirectoryConfigured() {
     if (!settings_.save_directory.empty()) {
         return true;
@@ -1397,18 +1409,42 @@ void MainWindow::StartScreenRecording(RecordingMode mode) {
     if (capture_in_progress_ || recording_service_.IsActive()) return;
     if (recording_hotkey_slot_ != HotkeySlot::None) CancelHotkeyRecording();
     ScopedBooleanReset capturing(capture_in_progress_);
-    if (!EnsureSaveDirectoryConfigured()) return;
+    const auto recording_directory = ResolveRecordingSaveDirectory();
+    if (!recording_directory) {
+        MessageBoxW(window_, recording_directory.Error().c_str(), L"录屏失败", MB_OK | MB_ICONERROR);
+        return;
+    }
+    const std::filesystem::path directory(recording_directory.Value());
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) {
+        const std::wstring message = L"无法创建录屏保存目录：\n" + directory.wstring();
+        MessageBoxW(window_, message.c_str(), L"录屏失败", MB_OK | MB_ICONERROR);
+        return;
+    }
 
     const bool was_visible = IsWindowVisible(window_) != FALSE;
-    // Exclude the control window too, including any compositor frame left while it hides.
-    SetWindowDisplayAffinity(window_, WDA_EXCLUDEFROMCAPTURE);
     if (tray_icon_controller_.IsInstalled()) {
+        // Hide without the DWM fade-out so no frame of this window reaches the capture.
+        // Don't toggle display affinity for a window that is about to be hidden:
+        // changing it while hidden can leave the DWM surface blank (white) when the
+        // window is shown again after recording.
+        const BOOL disable_transitions = TRUE;
+        DwmSetWindowAttribute(window_, DWMWA_TRANSITIONS_FORCEDISABLED,
+                              &disable_transitions, sizeof(disable_transitions));
         HideToTray(false);
         // Wait for the hidden window to disappear from the compositor before capture.
         DwmFlush();
+        const BOOL enable_transitions = FALSE;
+        DwmSetWindowAttribute(window_, DWMWA_TRANSITIONS_FORCEDISABLED,
+                              &enable_transitions, sizeof(enable_transitions));
+    } else {
+        // Without a tray icon the window stays on screen; keep it out of the recording.
+        recording_capture_excluded_ =
+            SetWindowDisplayAffinity(window_, WDA_EXCLUDEFROMCAPTURE) != FALSE;
     }
     const auto restore = [this, was_visible]() {
-        SetWindowDisplayAffinity(window_, WDA_NONE);
+        ReleaseRecordingCaptureExclusion();
         if (was_visible) ShowFromTray();
     };
     RECT region{GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN), 0, 0};
@@ -1448,20 +1484,23 @@ void MainWindow::StartScreenRecording(RecordingMode mode) {
 
     SYSTEMTIME time{};
     GetLocalTime(&time);
-    wchar_t name[128]{};
-    swprintf_s(name, L"Recording_%04u%02u%02u_%02u%02u%02u_%03u_%llu.%s",
-               time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
-               time.wMilliseconds, GetTickCount64(), capture::RecordingExtension(settings_.recording_format));
-    std::error_code error;
-    const std::filesystem::path directory(settings_.save_directory);
-    std::filesystem::create_directories(directory, error);
+    wchar_t base_name[32]{};
+    swprintf_s(base_name, L"%02u-%02u-%02u-%02u-%02u-%02u",
+               time.wYear % 100, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
+    const std::wstring extension = std::wstring(L".") + capture::RecordingExtension(settings_.recording_format);
+    std::filesystem::path output_path = directory / (base_name + extension);
+    for (unsigned suffix = 1; std::filesystem::exists(output_path, error); ++suffix) {
+        wchar_t name[64]{};
+        swprintf_s(name, L"%s_%02u%s", base_name, suffix, extension.c_str());
+        output_path = directory / name;
+    }
     if (error) {
         restore();
-        MessageBoxW(window_, L"无法创建录屏保存目录，请重新设置保存目录。", L"录屏失败", MB_OK | MB_ICONERROR);
+        MessageBoxW(window_, L"无法检查录屏文件名，请检查保存目录是否可访问。", L"录屏失败", MB_OK | MB_ICONERROR);
         return;
     }
-    auto result = target_window ? recording_service_.StartWindow(target_window, (directory / name).wstring()) :
-        recording_service_.Start(region, (directory / name).wstring());
+    auto result = target_window ? recording_service_.StartWindow(target_window, output_path.wstring()) :
+        recording_service_.Start(region, output_path.wstring());
     if (!result) {
         restore();
         UpdateStatus(L"录屏启动失败。");
@@ -1511,7 +1550,7 @@ void MainWindow::PollScreenRecording() {
         recording_overlay_.Close();
         auto result = recording_service_.Stop();
         recording_stopping_ = false;
-        SetWindowDisplayAffinity(window_, WDA_NONE);
+        ReleaseRecordingCaptureExclusion();
         SetWindowTextW(window_, L"原生 Win32 截图工具");
         UpdateRecordingSettingsDisplay();
         UpdateActionState();
@@ -1784,6 +1823,12 @@ void MainWindow::ShowFromTray() {
     ShowWindow(window_, IsIconic(window_) ? SW_RESTORE : SW_SHOW);
     UpdateWindow(window_);
     SetForegroundWindow(window_);
+}
+
+void MainWindow::ReleaseRecordingCaptureExclusion() {
+    if (!recording_capture_excluded_) return;
+    recording_capture_excluded_ = false;
+    SetWindowDisplayAffinity(window_, WDA_NONE);
 }
 
 void MainWindow::ExitApplication() {

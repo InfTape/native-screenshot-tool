@@ -82,6 +82,7 @@ private:
     bool TriggerCaptureByHotkey(int hotkey_identifier);
     void HideToTray(bool show_hint = true);
     void ShowFromTray();
+    void ReleaseRecordingCaptureExclusion();
     void ExitApplication();
     void HandleTrayCommand(TrayMenuCommand command);
     common::Result<capture::DesktopSnapshot> CaptureSnapshot() const;
@@ -93,6 +94,7 @@ private:
     void UpdateSaveButtonLabel() const;
     bool EnsureSaveDirectoryConfigured();
     common::Result<std::wstring> ResolveDefaultSaveDirectory() const;
+    common::Result<std::wstring> ResolveRecordingSaveDirectory() const;
     bool ChooseSaveDirectory(std::wstring& selected_directory) const;
     void ApplySaveFormatSelection();
     void ApplyRecordingFormatSelection();
@@ -127,6 +129,7 @@ private:
     std::array<HWND, kHotkeySlotCount> hotkey_labels_{};
     bool capture_in_progress_ = false;
     bool recording_stopping_ = false;
+    bool recording_capture_excluded_ = false;
     ULONGLONG recording_started_ = 0;
     HotkeySlot recording_hotkey_slot_ = HotkeySlot::None;
     std::array<bool, kHotkeySlotCount> hotkey_registered_{};
